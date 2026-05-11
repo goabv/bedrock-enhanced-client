@@ -1,5 +1,7 @@
 # Bedrock Enhanced Client
 
+> **⚠️ Experimental:** This is an experimental client for exploration and demonstration purposes. It is not production-ready and should not be used in production workloads. APIs, behavior, and configuration may change without notice.
+
 A high-level client for Amazon Bedrock Runtime that provides stateful conversation management, context window strategies, automatic prompt caching, cost estimation, and enhanced retry policies.
 
 ## Problem
