@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bedrock Enhanced Client — Context Window Management</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1419;
+            color: #e7e9ea;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1f2e 0%, #0d1117 100%);
+            border-bottom: 1px solid #30363d;
+            padding: 10px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+        .header h1 { font-size: 18px; font-weight: 600; color: #f0f6fc; }
+        .header h1 span { color: #58a6ff; }
+        .header-controls { display: flex; gap: 10px; align-items: center; }
+
+        select, button, input[type=number] {
+            font-size: 13px; padding: 6px 12px; border-radius: 7px;
+            border: 1px solid #30363d; background: #21262d; color: #e7e9ea; cursor: pointer;
+        }
+        select:hover, button:hover { border-color: #58a6ff; }
+        .btn-reset { background: #da3633; border-color: #da3633; color: white; }
+        .btn-reset:hover { background: #f85149; }
+        .btn-config { background: #1f6feb; border-color: #1f6feb; color: white; }
+        .btn-config:hover { background: #388bfd; }
+        .btn-send { background: #238636; border-color: #238636; color: white; font-weight: 600; padding: 9px 18px; font-size: 14px; }
+        .btn-send:hover { background: #2ea043; }
+        .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-auto { background: #1f6feb; border-color: #1f6feb; color: white; font-weight: 600; padding: 9px 18px; font-size: 14px; }
+        .btn-auto:hover { background: #388bfd; }
+        .btn-auto:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Savings bar */
+        .savings-bar {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 10px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 24px;
+            flex-shrink: 0;
+        }
+        .savings-pill {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 16px;
+            border-radius: 8px;
+            border: 1px solid #30363d;
+            background: #0d1117;
+        }
+        .savings-pill .pill-name { font-size: 12px; color: #8b949e; }
+        .savings-pill .pill-value { font-size: 20px; font-weight: 700; }
+        .savings-pill .pill-value.positive { color: #3fb950; }
+        .savings-pill .pill-value.negative { color: #f97316; }
+        .savings-pill .pill-value.neutral { color: #8b949e; }
+        .savings-pill .pill-label { font-size: 11px; color: #8b949e; }
+
+        /* Columns */
+        .columns { display: flex; flex: 1; overflow: hidden; }
+        .column { flex: 1; display: flex; flex-direction: column; border-right: 1px solid #30363d; overflow: hidden; min-width: 0; }
+        .column:last-child { border-right: none; }
+
+        .col-header { padding: 10px 14px; border-bottom: 1px solid #30363d; flex-shrink: 0; border-top: 3px solid var(--col-color, #6b7280); }
+        .col-header .strategy-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
+        .col-header .strategy-name { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--col-color, #6b7280); }
+        .col-header .cost-badge { font-size: 16px; font-weight: 700; color: #f0f6fc; }
+        .col-header .strategy-desc { font-size: 10px; color: #8b949e; }
+
+        .col-messages { flex: 1; overflow-y: auto; padding: 8px 10px; }
+        .turn-block { margin-bottom: 10px; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+        .turn-block .user-msg { background: #1f6feb; color: white; padding: 5px 9px; border-radius: 7px 7px 7px 2px; font-size: 11px; line-height: 1.4; margin-bottom: 4px; display: inline-block; max-width: 95%; }
+        .turn-block .assistant-msg { background: #161b22; border: 1px solid #30363d; color: #e7e9ea; padding: 7px 9px; border-radius: 2px 7px 7px 7px; font-size: 11px; line-height: 1.4; }
+
+        .col-metrics { padding: 6px 10px; border-top: 1px solid #30363d; background: #161b22; flex-shrink: 0; font-size: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 1px 10px; }
+        .metric-row { display: flex; justify-content: space-between; }
+        .metric-row .label { color: #8b949e; }
+        .metric-row .value { color: #e7e9ea; font-weight: 600; }
+        .metric-row .value.green { color: #3fb950; }
+
+        /* Input bar */
+        .input-bar { border-top: 1px solid #30363d; background: #161b22; padding: 10px 24px; flex-shrink: 0; }
+        .input-row { display: flex; gap: 10px; max-width: 800px; margin: 0 auto; }
+        .input-row input[type=text] { flex: 1; font-size: 14px; padding: 9px 14px; border-radius: 10px; border: 1px solid #30363d; background: #0d1117; color: #e7e9ea; outline: none; }
+        .input-row input[type=text]:focus { border-color: #58a6ff; }
+        .input-row input[type=text]::placeholder { color: #484f58; }
+        .auto-progress { font-size: 12px; color: #8b949e; margin-left: 10px; display: none; }
+        .auto-progress.visible { display: inline-flex; align-items: center; }
+        .quick-prompts { display: flex; gap: 6px; margin-top: 7px; justify-content: center; flex-wrap: wrap; }
+        .quick-prompt { font-size: 11px; padding: 4px 9px; border-radius: 12px; background: #21262d; border: 1px solid #30363d; color: #8b949e; cursor: pointer; }
+        .quick-prompt:hover { background: #292e36; color: #e7e9ea; border-color: #58a6ff; }
+
+        .loading { display: inline-block; width: 12px; height: 12px; border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .empty-state { text-align: center; padding: 30px 10px; color: #484f58; font-size: 12px; }
+
+        /* Config Modal */
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-overlay.visible { display: flex; }
+        .modal { background: #161b22; border: 1px solid #30363d; border-radius: 16px; padding: 28px; width: 700px; max-height: 80vh; overflow-y: auto; }
+        .modal h2 { font-size: 20px; color: #f0f6fc; margin-bottom: 16px; }
+        .modal h2 span { color: #58a6ff; }
+
+        .strategy-form { background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+        .strategy-form .form-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .strategy-form .form-header input[type=text] { font-size: 14px; font-weight: 600; background: transparent; border: none; color: #f0f6fc; outline: none; width: 200px; }
+        .strategy-form .form-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .strategy-form label { font-size: 12px; color: #8b949e; display: flex; flex-direction: column; gap: 4px; }
+        .strategy-form select, .strategy-form input[type=number] { width: 140px; }
+        .strategy-form .checkbox-label { flex-direction: row; align-items: center; gap: 6px; }
+
+        .modal-actions { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end; }
+        .btn-add { background: #21262d; border: 1px dashed #30363d; color: #8b949e; width: 100%; padding: 10px; text-align: center; border-radius: 8px; margin-bottom: 12px; }
+        .btn-add:hover { border-color: #58a6ff; color: #58a6ff; }
+        .btn-remove { background: none; border: none; color: #da3633; font-size: 16px; cursor: pointer; padding: 4px 8px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span>BedrockEnhancedClient</span> — Context Window Management</h1>
+        <div class="header-controls">
+            <select id="modelSelect">
+                <option value="us.anthropic.claude-sonnet-4-5-20250929-v1:0">Claude Sonnet 4.5</option>
+                <option value="us.anthropic.claude-sonnet-4-20250514-v1:0">Claude Sonnet 4</option>
+                <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">Claude Haiku 4.5</option>
+            </select>
+            <button class="btn-config" onclick="openConfig()">⚙ Configure</button>
+            <button class="btn-reset" onclick="resetSession()">Reset</button>
+        </div>
+    </div>
+
+    <div class="savings-bar" id="savingsBar"></div>
+
+    <div class="columns" id="columnsContainer"></div>
+
+    <div class="input-bar">
+        <div class="input-row">
+            <input type="text" id="chatInput" placeholder="Type a message — runs through all strategies in parallel..."
+                   onkeydown="if(event.key==='Enter') sendMessage()">
+            <button class="btn-send" id="sendBtn" onclick="sendMessage()">Send</button>
+            <button class="btn-auto" id="autoBtn" onclick="runAutoDemo()">▶ Auto Demo</button>
+            <span class="auto-progress" id="autoProgress">Turn 0/20</span>
+        </div>
+        <div class="quick-prompts">
+            <span class="quick-prompt" onclick="quickSend('Explain S3 presigned URLs')">S3 presigned URLs</span>
+            <span class="quick-prompt" onclick="quickSend('How does DynamoDB pagination work?')">DynamoDB pagination</span>
+            <span class="quick-prompt" onclick="quickSend('What are Horcruxes?')">Horcruxes</span>
+            <span class="quick-prompt" onclick="quickSend('Explain the Deathly Hallows')">Deathly Hallows</span>
+            <span class="quick-prompt" onclick="quickSend('Describe the Battle of Hogwarts')">Battle of Hogwarts</span>
+        </div>
+    </div>
+
+    <!-- Config Modal -->
+    <div class="modal-overlay" id="configModal">
+        <div class="modal">
+            <h2>⚙ <span>Strategy Configuration</span></h2>
+            <div id="strategyForms"></div>
+            <button class="btn-add" onclick="addStrategyForm()">+ Add Strategy</button>
+            <div class="modal-actions">
+                <button onclick="closeConfig()">Cancel</button>
+                <button class="btn-config" onclick="applyConfig()">Apply & Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const COLORS = ['#6b7280', '#f97316', '#3fb950', '#a78bfa', '#f43f5e', '#06b6d4'];
+        const STRATEGY_OPTIONS = [
+            { value: 'NONE', label: 'None (no management)' },
+            { value: 'SLIDING_WINDOW', label: 'Sliding Window' },
+            { value: 'COST_OPTIMIZED_TRIMMING', label: 'Cost Optimized (Caching + Trimming)' },
+            { value: 'COST_OPTIMIZED_SUMMARIZE', label: 'Cost Optimized (Caching + Summarization)' },
+            { value: 'SUMMARIZE', label: 'Summarize' }
+        ];
+
+        let strategies = [
+            { name: 'Default', strategy: 'NONE', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, cachingEnabled: false },
+            { name: 'Sliding Window', strategy: 'SLIDING_WINDOW', maxTokens: 32768, coherenceFloor: 10, maxMessages: 10, cachingEnabled: false },
+            { name: 'Cost Optimized (Caching + Trimming)', strategy: 'COST_OPTIMIZED_TRIMMING', maxTokens: 0, coherenceFloor: 10, maxMessages: 10, cachingEnabled: true }
+        ];
+
+        let isLoading = false;
+        let autoRunning = false;
+
+        // Initialize columns
+        function renderColumns() {
+            const container = document.getElementById('columnsContainer');
+            container.innerHTML = '';
+            strategies.forEach((s, i) => {
+                const color = COLORS[i % COLORS.length];
+                container.innerHTML += `
+                    <div class="column" style="--col-color: ${color}">
+                        <div class="col-header">
+                            <div class="strategy-title">
+                                <span class="strategy-name">${s.name}</span>
+                                <span class="cost-badge" id="cost_${i}">$0.0000</span>
+                            </div>
+                            <div class="strategy-desc">${getDesc(s)}</div>
+                        </div>
+                        <div class="col-messages" id="msgs_${i}">
+                            <div class="empty-state"><p>${getEmptyText(s)}</p></div>
+                        </div>
+                        <div class="col-metrics">
+                            <div class="metric-row"><span class="label">Input tokens</span><span class="value" id="m_input_${i}">0</span></div>
+                            <div class="metric-row"><span class="label">Output tokens</span><span class="value" id="m_output_${i}">0</span></div>
+                            <div class="metric-row"><span class="label">Context window</span><span class="value" id="m_ctx_${i}">0</span></div>
+                            <div class="metric-row"><span class="label">${s.cachingEnabled ? 'Cache reads' : 'Messages'}</span><span class="value ${s.cachingEnabled ? 'green' : ''}" id="m_extra_${i}">0</span></div>
+                        </div>
+                    </div>`;
+            });
+            renderSavingsBar();
+        }
+
+        function renderSavingsBar() {
+            const bar = document.getElementById('savingsBar');
+            if (strategies.length <= 1) { bar.innerHTML = ''; return; }
+            const baseName = strategies[0].name;
+            let html = '';
+            for (let i = 1; i < strategies.length; i++) {
+                html += `
+                    <div class="savings-pill">
+                        <div>
+                            <div class="pill-name">${strategies[i].name}</div>
+                            <div class="pill-label">vs ${baseName}</div>
+                        </div>
+                        <div class="pill-value neutral" id="savings_${i}">—</div>
+                    </div>`;
+            }
+            bar.innerHTML = html;
+        }
+
+        function getDesc(s) {
+            const cInfo = s.coherenceFloor > 0 ? (s.maxMessages > 0 && s.maxMessages !== s.coherenceFloor ? `Cmin=${s.coherenceFloor}, Cmax=${s.maxMessages}` : `C=${s.coherenceFloor}`) : '';
+            switch(s.strategy) {
+                case 'NONE': return 'No context management — full history every turn';
+                case 'SLIDING_WINDOW': return `Drops oldest at ${s.maxTokens > 0 ? s.maxTokens + ' tokens or ' : ''}${cInfo} user msgs`;
+                case 'COST_OPTIMIZED': return `Caching + trimming, ${cInfo}`;
+                case 'COST_OPTIMIZED_SUMMARIZE': return `Caching + summarization, ${cInfo}`;
+                case 'SUMMARIZE': return `Summarizes older messages, ${cInfo}`;
+                default: return '';
+            }
+        }
+
+        function getEmptyText(s) {
+            switch(s.strategy) {
+                case 'NONE': return 'Full conversation sent every turn.';
+                case 'SLIDING_WINDOW': return 'Drops oldest messages at cap.';
+                case 'COST_OPTIMIZED': return 'Smart trimming + prompt caching.';
+                case 'COST_OPTIMIZED_SUMMARIZE': return 'Summarization + prompt caching.';
+                case 'SUMMARIZE': return 'Summarizes older messages.';
+                default: return 'Send a message to start.';
+            }
+        }
+
+        function getModelId() { return document.getElementById('modelSelect').value; }
+
+        async function sendMessage() {
+            if (isLoading) return;
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            if (!message) return;
+            input.value = '';
+            isLoading = true;
+            document.getElementById('sendBtn').disabled = true;
+
+            strategies.forEach((_, i) => addTurnToColumn(i, message));
+
+            try {
+                const resp = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ modelId: getModelId(), message })
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    strategies.forEach((_, i) => replaceLastAssistant(i, '⚠️ ' + data.error));
+                } else {
+                    updateFromResponse(data);
+                }
+            } catch (err) {
+                strategies.forEach((_, i) => replaceLastAssistant(i, '⚠️ ' + err.message));
+            }
+            isLoading = false;
+            document.getElementById('sendBtn').disabled = false;
+            input.focus();
+        }
+
+        function updateFromResponse(data) {
+            const names = strategies.map(s => s.name);
+            let costs = [];
+            names.forEach((name, i) => {
+                const result = data.results[name];
+                if (!result) { replaceLastAssistant(i, '(no result)'); costs.push(0); return; }
+                replaceLastAssistant(i, result.responseText);
+                document.getElementById('cost_' + i).textContent = '$' + result.totalCost.toFixed(4);
+                document.getElementById('m_input_' + i).textContent = fmtNum(result.inputTokens);
+                document.getElementById('m_output_' + i).textContent = fmtNum(result.outputTokens);
+                document.getElementById('m_ctx_' + i).textContent = fmtNum(result.contextWindowTokens);
+                const extra = strategies[i].cachingEnabled ? result.cacheReadTokens : result.messageCount;
+                document.getElementById('m_extra_' + i).textContent = fmtNum(extra);
+                costs.push(result.totalCost);
+            });
+
+            // Update savings bar (compare each strategy vs first)
+            const baseCost = costs[0];
+            for (let i = 1; i < strategies.length; i++) {
+                const el = document.getElementById('savings_' + i);
+                if (!el) continue;
+                if (baseCost > 0) {
+                    const pct = ((baseCost - costs[i]) / baseCost) * 100;
+                    el.textContent = pct.toFixed(1) + '%';
+                    el.className = 'pill-value ' + (pct > 0 ? 'positive' : pct < 0 ? 'negative' : 'neutral');
+                } else {
+                    el.textContent = '—';
+                    el.className = 'pill-value neutral';
+                }
+            }
+        }
+
+        function addTurnToColumn(idx, userMsg) {
+            const container = document.getElementById('msgs_' + idx);
+            const empty = container.querySelector('.empty-state');
+            if (empty) empty.remove();
+            const block = document.createElement('div');
+            block.className = 'turn-block';
+            block.innerHTML = `<div class="user-msg">${escapeHtml(userMsg)}</div><div class="assistant-msg"><span class="loading"></span></div>`;
+            container.appendChild(block);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function replaceLastAssistant(idx, text) {
+            const container = document.getElementById('msgs_' + idx);
+            const blocks = container.querySelectorAll('.turn-block');
+            if (blocks.length === 0) return;
+            const last = blocks[blocks.length - 1].querySelector('.assistant-msg');
+            if (last) last.innerHTML = escapeHtml(text);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function quickSend(text) { document.getElementById('chatInput').value = text; sendMessage(); }
+
+        async function resetSession() {
+            await fetch('/api/reset', { method: 'POST' });
+            renderColumns();
+        }
+
+        // === CONFIG MODAL ===
+        function openConfig() {
+            renderConfigForms();
+            document.getElementById('configModal').classList.add('visible');
+        }
+        function closeConfig() { document.getElementById('configModal').classList.remove('visible'); }
+
+        function renderConfigForms() {
+            const container = document.getElementById('strategyForms');
+            container.innerHTML = '';
+            strategies.forEach((s, i) => {
+                const showTokens = s.strategy === 'SLIDING_WINDOW';
+                const showCmin = s.strategy !== 'NONE';
+                const showCmax = s.strategy === 'SLIDING_WINDOW';
+                const showCache = s.strategy === 'COST_OPTIMIZED_TRIMMING' || s.strategy === 'COST_OPTIMIZED_SUMMARIZE';
+
+                container.innerHTML += `
+                    <div class="strategy-form" id="sform_${i}">
+                        <div class="form-header">
+                            <input type="text" value="${s.name}" id="sname_${i}">
+                            <button class="btn-remove" onclick="removeStrategy(${i})">✕</button>
+                        </div>
+                        <div class="form-row">
+                            <label>Strategy
+                                <select id="sstrat_${i}" onchange="onStrategyChange(${i})">
+                                    ${STRATEGY_OPTIONS.map(o => `<option value="${o.value}" ${o.value === s.strategy ? 'selected' : ''}>${o.label}</option>`).join('')}
+                                </select>
+                            </label>
+                            ${showTokens ? `<label>Max Tokens (0=none)<input type="number" id="stokens_${i}" value="${s.maxTokens}" min="0"></label>` : `<input type="hidden" id="stokens_${i}" value="${s.maxTokens}">`}
+                            ${showCmin ? `<label>C (user msgs)<input type="number" id="sfloor_${i}" value="${s.coherenceFloor}" min="0"></label>` : `<input type="hidden" id="sfloor_${i}" value="0">`}
+                            ${showCmax ? `<label>Cmax (user msgs, 0=C)<input type="number" id="smax_${i}" value="${s.maxMessages}" min="0"></label>` : `<input type="hidden" id="smax_${i}" value="${s.maxMessages}">`}
+                            ${showCache ? `<label class="checkbox-label"><input type="checkbox" id="scache_${i}" ${s.cachingEnabled ? 'checked' : ''}> Caching</label>` : `<input type="hidden" id="scache_${i}" value="${s.cachingEnabled}">`}
+                        </div>
+                    </div>`;
+            });
+        }
+
+        function onStrategyChange(idx) {
+            // Read current form values before re-rendering
+            strategies = strategies.map((s, i) => {
+                const nameEl = document.getElementById('sname_' + i);
+                const stratEl = document.getElementById('sstrat_' + i);
+                const tokensEl = document.getElementById('stokens_' + i);
+                const floorEl = document.getElementById('sfloor_' + i);
+                const maxEl = document.getElementById('smax_' + i);
+                const cacheEl = document.getElementById('scache_' + i);
+                return {
+                    name: nameEl ? nameEl.value : s.name,
+                    strategy: stratEl ? stratEl.value : s.strategy,
+                    maxTokens: tokensEl ? (parseInt(tokensEl.value) || 0) : s.maxTokens,
+                    coherenceFloor: floorEl ? (parseInt(floorEl.value) || 0) : s.coherenceFloor,
+                    maxMessages: maxEl ? (parseInt(maxEl.value) || 0) : s.maxMessages,
+                    cachingEnabled: cacheEl ? (cacheEl.type === 'checkbox' ? cacheEl.checked : cacheEl.value === 'true') : s.cachingEnabled
+                };
+            });
+
+            const newStrat = strategies[idx].strategy;
+            // Auto-set caching for cost-optimized strategies
+            if (newStrat === 'COST_OPTIMIZED_TRIMMING' || newStrat === 'COST_OPTIMIZED_SUMMARIZE') {
+                strategies[idx].cachingEnabled = true;
+            } else {
+                strategies[idx].cachingEnabled = false;
+            }
+            // Set sensible defaults for C if not set
+            if (newStrat !== 'NONE' && strategies[idx].coherenceFloor === 0) {
+                strategies[idx].coherenceFloor = 10;
+                strategies[idx].maxMessages = 10;
+            }
+            // Auto-update name to match strategy
+            const nameMap = {
+                'NONE': 'Default',
+                'SLIDING_WINDOW': 'Sliding Window',
+                'SUMMARIZE': 'Summarize',
+                'COST_OPTIMIZED_TRIMMING': 'Cost Optimized (Caching + Trimming)',
+                'COST_OPTIMIZED_SUMMARIZE': 'Cost Optimized (Caching + Summarization)'
+            };
+            strategies[idx].name = nameMap[newStrat] || strategies[idx].name;
+            renderConfigForms();
+        }
+
+        function addStrategyForm() {
+            strategies.push({ name: 'New Strategy', strategy: 'SLIDING_WINDOW', maxTokens: 0, coherenceFloor: 10, maxMessages: 10, cachingEnabled: false });
+            renderConfigForms();
+        }
+
+        function removeStrategy(idx) {
+            if (strategies.length <= 1) return;
+            strategies.splice(idx, 1);
+            renderConfigForms();
+        }
+
+        async function applyConfig() {
+            // Read form values
+            strategies = strategies.map((_, i) => {
+                const cacheEl = document.getElementById('scache_' + i);
+                const cachingEnabled = cacheEl.type === 'checkbox' ? cacheEl.checked : cacheEl.value === 'true';
+                return {
+                    name: document.getElementById('sname_' + i).value,
+                    strategy: document.getElementById('sstrat_' + i).value,
+                    maxTokens: parseInt(document.getElementById('stokens_' + i).value) || 0,
+                    coherenceFloor: parseInt(document.getElementById('sfloor_' + i).value) || 0,
+                    maxMessages: parseInt(document.getElementById('smax_' + i).value) || 0,
+                    cachingEnabled: cachingEnabled
+                };
+            });
+
+            await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ strategies, modelId: getModelId() })
+            });
+
+            closeConfig();
+            renderColumns();
+        }
+
+        // === AUTO DEMO ===
+        const autoMessages = [
+            "Who is Harry Potter and what makes him special in the wizarding world?",
+            "Tell me about Hogwarts School. What are the four houses and their traits?",
+            "Explain the Sorting Hat. How does it decide which house a student belongs to?",
+            "What are Horcruxes? Why did Voldemort create them?",
+            "How many Horcruxes did Voldemort make and what were they?",
+            "Describe the Triwizard Tournament. What were the three tasks Harry faced?",
+            "How does the Patronus charm work? What form does Harry's Patronus take and why?",
+            "Explain the Deathly Hallows — the Elder Wand, Resurrection Stone, and Invisibility Cloak.",
+            "What role does Severus Snape play across all seven books? Was he good or evil?",
+            "Compare Dumbledore and Voldemort as wizards. What made their philosophies different?",
+            "How does the prophecy about Harry and Voldemort drive the entire plot?",
+            "What is the significance of the Mirror of Erised?",
+            "Explain how the Marauder's Map works and who created it.",
+            "What are the Unforgivable Curses and why are they banned?",
+            "Describe the role of house-elves in the wizarding world. How does Dobby's story arc work?",
+            "What happens in the Department of Mysteries battle in Order of the Phoenix?",
+            "How does the Room of Requirement work and what role does it play in the final battle?",
+            "Describe the Battle of Hogwarts. What were the key turning points?",
+            "Why did Harry survive Voldemort's killing curse in the Forbidden Forest?",
+            "How does the series end? What happens to Harry, Ron, and Hermione in the epilogue?"
+        ];
+
+        async function runAutoDemo() {
+            if (autoRunning) return;
+            autoRunning = true;
+            document.getElementById('autoBtn').disabled = true;
+            document.getElementById('sendBtn').disabled = true;
+            const progress = document.getElementById('autoProgress');
+            progress.classList.add('visible');
+
+            await resetSession();
+            // Re-apply config to ensure sessions are created
+            await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ strategies, modelId: getModelId() })
+            });
+            await sleep(500);
+
+            for (let i = 0; i < autoMessages.length; i++) {
+                if (!autoRunning) break;
+                progress.textContent = `Turn ${i + 1}/${autoMessages.length}`;
+                document.getElementById('chatInput').value = autoMessages[i];
+                await sendMessageDirect(autoMessages[i]);
+                await sleep(800);
+            }
+
+            document.getElementById('autoBtn').disabled = false;
+            document.getElementById('sendBtn').disabled = false;
+            progress.textContent = 'Done!';
+            autoRunning = false;
+            setTimeout(() => progress.classList.remove('visible'), 3000);
+        }
+
+        async function sendMessageDirect(message) {
+            strategies.forEach((_, i) => addTurnToColumn(i, message));
+            try {
+                const resp = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ modelId: getModelId(), message })
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    strategies.forEach((_, i) => replaceLastAssistant(i, '⚠️ ' + data.error));
+                } else {
+                    updateFromResponse(data);
+                }
+            } catch (err) {
+                strategies.forEach((_, i) => replaceLastAssistant(i, '⚠️ ' + err.message));
+            }
+        }
+
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+        function fmtNum(n) { return n.toLocaleString(); }
+        function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+        // Init
+        renderColumns();
+    </script>
+</body>
+</html>

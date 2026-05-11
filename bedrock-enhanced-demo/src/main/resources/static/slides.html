@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bedrock Enhanced Client — Presentation</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0d1117;
+            color: #e7e9ea;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        .slide {
+            display: none;
+            width: 100vw;
+            height: 100vh;
+            padding: 50px 80px;
+            position: absolute;
+            top: 0;
+            left: 0;
+            flex-direction: column;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        .slide.active {
+            display: flex;
+            opacity: 1;
+        }
+
+        /* Ambient glow effects */
+        .glow-tl {
+            position: absolute;
+            top: -200px;
+            left: -200px;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(88,166,255,0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .glow-br {
+            position: absolute;
+            bottom: -200px;
+            right: -200px;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(63,185,80,0.06) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .glow-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 800px;
+            height: 800px;
+            background: radial-gradient(circle, rgba(88,166,255,0.04) 0%, transparent 60%);
+            pointer-events: none;
+        }
+
+        /* Slide counter */
+        .slide-counter {
+            position: fixed;
+            bottom: 24px;
+            right: 36px;
+            font-size: 14px;
+            color: #30363d;
+            z-index: 100;
+            font-weight: 500;
+        }
+
+        /* Progress bar */
+        .progress-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #58a6ff, #3fb950);
+            transition: width 0.4s ease;
+            z-index: 200;
+        }
+
+        /* === SLIDE STYLES === */
+
+        /* Title slide */
+        .slide-title {
+            background: linear-gradient(160deg, #0d1117 0%, #161b22 40%, #1a1f2e 100%);
+            text-align: center;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .slide-title .logo-icon {
+            font-size: 64px;
+            margin-bottom: 24px;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-8px); }
+        }
+
+        .slide-title h1 {
+            font-size: 64px;
+            font-weight: 800;
+            color: #f0f6fc;
+            margin-bottom: 16px;
+            letter-spacing: -1px;
+        }
+
+        .slide-title h1 span {
+            background: linear-gradient(135deg, #58a6ff, #79c0ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .slide-title .subtitle {
+            font-size: 28px;
+            color: #8b949e;
+            margin-bottom: 48px;
+            font-weight: 400;
+        }
+
+        .slide-title .meta {
+            font-size: 17px;
+            color: #484f58;
+            padding: 10px 24px;
+            border: 1px solid #21262d;
+            border-radius: 24px;
+            display: inline-block;
+        }
+
+        /* Content slides */
+        .slide h2 {
+            font-size: 46px;
+            font-weight: 800;
+            color: #f0f6fc;
+            margin-bottom: 36px;
+            line-height: 1.2;
+            letter-spacing: -0.5px;
+        }
+
+        .slide h2 span {
+            background: linear-gradient(135deg, #58a6ff, #79c0ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .slide p {
+            font-size: 24px;
+            line-height: 1.7;
+            color: #c9d1d9;
+            margin-bottom: 20px;
+        }
+
+        .slide ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .slide ul li {
+            font-size: 23px;
+            line-height: 1.5;
+            color: #c9d1d9;
+            padding: 12px 0 12px 40px;
+            position: relative;
+            border-left: 2px solid #21262d;
+            margin-left: 12px;
+        }
+
+        .slide ul li::before {
+            position: absolute;
+            left: -11px;
+            top: 14px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+        }
+
+        .slide ul li strong {
+            color: #f0f6fc;
+        }
+
+        /* Problem bullets */
+        .problem-list li::before {
+            content: '';
+            background: #da3633;
+            width: 10px;
+            height: 10px;
+            left: -6px;
+            top: 20px;
+        }
+
+        .problem-list li {
+            border-left-color: #da363355;
+        }
+
+        .solution-list li::before {
+            content: '';
+            background: #3fb950;
+            width: 10px;
+            height: 10px;
+            left: -6px;
+            top: 20px;
+        }
+
+        .solution-list li {
+            border-left-color: #3fb95055;
+        }
+
+        .feature-list li::before {
+            content: '';
+            background: #58a6ff;
+            width: 10px;
+            height: 10px;
+            left: -6px;
+            top: 20px;
+        }
+
+        .feature-list li {
+            border-left-color: #58a6ff55;
+        }
+
+        /* Code block */
+        .code-block {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 16px;
+            padding: 28px 32px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 19px;
+            line-height: 1.7;
+            color: #e7e9ea;
+            margin: 24px 0;
+            overflow-x: auto;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03);
+        }
+
+        .code-block .keyword { color: #ff7b72; }
+        .code-block .string { color: #a5d6ff; }
+        .code-block .comment { color: #8b949e; font-style: italic; }
+        .code-block .type { color: #79c0ff; }
+        .code-block .method { color: #d2a8ff; }
+
+        /* Strategy cards */
+        .strategy-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 24px;
+            margin-top: 36px;
+        }
+
+        .strategy-card {
+            background: linear-gradient(180deg, #161b22 0%, #0d1117 100%);
+            border: 1px solid #30363d;
+            border-radius: 20px;
+            padding: 32px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .strategy-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+        }
+
+        .strategy-card h4 {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 14px;
+        }
+
+        .strategy-card p {
+            font-size: 18px;
+            color: #8b949e;
+            line-height: 1.6;
+        }
+
+        .strategy-card.default { border-top: 4px solid #6b7280; }
+        .strategy-card.default h4 { color: #9ca3af; }
+
+        .strategy-card.sliding { border-top: 4px solid #f97316; }
+        .strategy-card.sliding h4 { color: #fb923c; }
+
+        .strategy-card.summarize { border-top: 4px solid #a78bfa; }
+        .strategy-card.summarize h4 { color: #c4b5fd; }
+
+        .strategy-card.cost-opt { border-top: 4px solid #3fb950; }
+        .strategy-card.cost-opt h4 { color: #4ade80; }
+
+        /* Architecture diagram */
+        .arch-diagram {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 16px;
+            padding: 32px 44px;
+            font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
+            font-size: 16px;
+            line-height: 1.9;
+            color: #8b949e;
+            margin-top: 24px;
+            white-space: pre;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+
+        .arch-diagram .highlight { color: #79c0ff; font-weight: 700; }
+        .arch-diagram .green { color: #4ade80; }
+        .arch-diagram .orange { color: #fb923c; }
+        .arch-diagram .method { color: #d2a8ff; }
+
+        /* Demo slide */
+        .slide-demo {
+            background: radial-gradient(ellipse at center, #0d2818 0%, #0d1117 60%);
+            text-align: center;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .slide-demo .demo-icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 0.9; }
+        }
+
+        .slide-demo h2 {
+            font-size: 72px;
+            background: linear-gradient(135deg, #3fb950, #4ade80);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 20px;
+        }
+
+        .slide-demo p {
+            font-size: 26px;
+            color: #8b949e;
+        }
+
+        /* Two column layout */
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+            margin-top: 16px;
+        }
+
+        .col-box {
+            background: linear-gradient(180deg, #161b22 0%, #0d1117 100%);
+            border: 1px solid #30363d;
+            border-radius: 16px;
+            padding: 18px 22px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+
+        .col-box h4 {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #58a6ff, #79c0ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .col-box ul li {
+            font-size: 17px;
+            padding: 5px 0 5px 24px;
+            border-left: none;
+            margin-left: 0;
+        }
+
+        .col-box ul li::before {
+            left: 0;
+            top: 10px;
+            width: 8px;
+            height: 8px;
+        }
+
+        /* Comparison table */
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 24px;
+            font-size: 21px;
+            background: #161b22;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid #30363d;
+        }
+
+        .comparison-table th {
+            text-align: left;
+            padding: 16px 20px;
+            color: #8b949e;
+            border-bottom: 1px solid #30363d;
+            font-weight: 600;
+            background: #0d1117;
+        }
+
+        .comparison-table td {
+            padding: 16px 20px;
+            border-bottom: 1px solid #21262d;
+            color: #c9d1d9;
+        }
+
+        .comparison-table tr:last-child td { border-bottom: none; }
+        .comparison-table tr:hover td { background: #1c2128; }
+
+        .comparison-table .strategy-name { font-weight: 700; }
+        .comparison-table .default-color { color: #9ca3af; }
+        .comparison-table .sliding-color { color: #fb923c; }
+        .comparison-table .summarize-color { color: #c4b5fd; }
+        .comparison-table .cost-opt-color { color: #4ade80; }
+
+        /* Decorative elements */
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            background: #21262d;
+            color: #8b949e;
+            border: 1px solid #30363d;
+            margin-left: 12px;
+            vertical-align: middle;
+        }
+
+        .badge.green { background: #0d4429; color: #4ade80; border-color: #238636; }
+        .badge.blue { background: #0c2d6b; color: #79c0ff; border-color: #1f6feb; }
+    </style>
+</head>
+<body>
+
+<div class="progress-bar" id="progressBar" style="width: 12.5%"></div>
+
+<!-- SLIDE 1: Title -->
+<div class="slide slide-title active">
+    <div class="glow-tl"></div>
+    <div class="glow-br"></div>
+    <div class="logo-icon">⚡</div>
+    <h1><span>Bedrock Enhanced Client</span></h1>
+    <div class="subtitle">A High-Level Client for Stateful Conversation Management</div>
+    <div class="meta">AWS SDK for Java v2 &nbsp;·&nbsp; services-custom/bedrock-enhanced</div>
+    <div class="meta" style="margin-top: 16px; color: #8b949e; border-color: #30363d;">Presented By: Abhinav Goyal</div>
+</div>
+
+<!-- SLIDE 2: Problem Statement -->
+<div class="slide">
+    <div class="glow-tl"></div>
+    <h2>The Problem: <span>Building Multi-Turn Conversations is Hard</span></h2>
+    <ul class="problem-list">
+        <li><strong>No conversation state</strong> — The Converse API is stateless. Developers must manually track and resend full message history every turn.</li>
+        <li><strong>Unbounded cost growth</strong> — Each turn re-sends all previous messages as input tokens. A 20-turn conversation costs 20x more per turn than the first.</li>
+        <li><strong>Context window limits</strong> — Models have finite context windows. Without management, long conversations fail with validation errors.</li>
+        <li><strong>No built-in caching</strong> — Prompt caching exists but is not enabled by default. Different models have different caching mechanisms and constraints.</li>
+        <li><strong>Model-specific complexity</strong> — Each model family has different context limits, caching strategies, and summarization behaviors. Developers must handle each one differently.</li>
+        <li><strong>Retry is insufficient</strong> — Standard SDK retry strategies use generic exponential backoff. Bedrock needs model-aware throttling — token-per-minute limits, concurrent request caps, and adaptive backoff that responds to real-time capacity signals.</li>
+    </ul>
+</div>
+
+<!-- SLIDE 3: The Solution -->
+<div class="slide">
+    <div class="glow-center"></div>
+    <h2>The Solution: <span>BedrockEnhancedClient</span></h2>
+    <p>A high-level wrapper around <code>BedrockRuntimeClient</code> that manages the full lifecycle of multi-turn conversations — abstracting away model-specific differences so developers write <strong>3 lines of code</strong> instead of 50.</p>
+    <div class="code-block">
+<span class="comment">// Create client once, reuse across sessions</span>
+<span class="type">BedrockEnhancedClient</span> client = <span class="type">BedrockEnhancedClient</span>.<span class="method">builder</span>()
+    .<span class="method">contextWindowConfig</span>(c -> c.<span class="method">maxTokens</span>(<span class="string">8192</span>)
+                              .<span class="method">trimStrategy</span>(TrimStrategy.<span class="string">COST_OPTIMIZED</span>))
+    .<span class="method">promptCachingConfig</span>(p -> p.<span class="method">enabled</span>(<span class="keyword">true</span>))
+    .<span class="method">build</span>();
+
+<span class="comment">// Create a session, start talking</span>
+<span class="type">ChatSession</span> session = client.<span class="method">createSession</span>(<span class="string">"us.anthropic.claude-sonnet-4-5"</span>);
+<span class="type">ChatResponse</span> resp = session.<span class="method">converse</span>(<span class="string">"Tell me about Horcruxes"</span>);
+<span class="type">ChatResponse</span> followUp = session.<span class="method">converse</span>(<span class="string">"How were they destroyed?"</span>);
+    </div>
+</div>
+
+<!-- SLIDE 4: Features Overview -->
+<div class="slide">
+    <div class="glow-br"></div>
+    <h2>Features at a Glance</h2>
+    <div class="two-col">
+        <div class="col-box">
+            <h4>Context Window Management</h4>
+            <ul class="feature-list">
+                <li><strong>5 trim strategies</strong> — Sliding window, summarize, chunked, cost-optimized, drop-oldest</li>
+                <li><strong>Token-based limits</strong> — Uses actual Bedrock response counts, no heuristics</li>
+                <li><strong>Time-based expiry</strong> — Auto-expire messages older than a duration</li>
+                <li><strong>Overflow policies</strong> — Auto-trim or reject (caller decides)</li>
+            </ul>
+        </div>
+        <div class="col-box">
+            <h4>Cost & Performance</h4>
+            <ul class="feature-list">
+                <li><strong>Automatic prompt caching</strong> — Inserts CachePointBlock markers transparently</li>
+                <li><strong>Real-time cost tracking</strong> — Per-session CostEstimate with cache savings</li>
+                <li><strong>Token budget enforcement</strong> — Hard cap on total session spend</li>
+                <li><strong>Client-side rate limiting</strong> — Token bucket to avoid throttling</li>
+            </ul>
+        </div>
+    </div>
+    <div class="two-col" style="margin-top: 12px;">
+        <div class="col-box">
+            <h4>Reliability</h4>
+            <ul class="feature-list">
+                <li><strong>Model-aware throttling</strong> — Goes beyond standard retries with token-per-minute tracking and adaptive backoff based on real-time capacity signals</li>
+                <li><strong>Bedrock-specific retries</strong> — Separate policies for throttling (429) vs transient errors (5xx) with full-jitter backoff</li>
+            </ul>
+        </div>
+        <div class="col-box">
+            <h4>Developer Experience</h4>
+            <ul class="feature-list">
+                <li><strong>Model-agnostic API</strong> — Hides per-model differences in caching, context limits, and summarization behind a single interface</li>
+                <li><strong>Familiar pattern</strong> — Same module style as other SDK enhanced clients and high-level libraries</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 5: Architecture -->
+<div class="slide">
+    <div class="glow-tl"></div>
+    <h2>Architecture</h2>
+    <div class="arch-diagram"><span class="highlight">BedrockEnhancedClient</span>  (thread-safe, creates sessions)
+│
+│  Config: ContextWindowConfig, PromptCachingConfig,
+│          ThrottlingConfig, BedrockRetryConfig, PricingProvider
+│
+├── <span class="method">createSession</span>(modelId)
+│
+▼
+<span class="highlight">ChatSession</span>  (stateful, one per conversation)
+│
+│  ┌─────────────────────┐   ┌────────────────────┐
+│  │ <span class="green">ContextWindowManager</span> │   │ <span class="orange">Token Tracking</span>      │
+│  │  • messages[]       │   │  • inputTokens     │
+│  │  • trimStrategy     │   │  • cacheRead/Write │
+│  │  • actualTokens     │   │  • costEstimate()  │
+│  └─────────────────────┘   └────────────────────┘
+│  ┌─────────────────────┐   ┌────────────────────┐
+│  │ <span class="green">BedrockRetryHandler</span>  │   │ <span class="green">TokenBucketLimiter</span>  │
+│  └─────────────────────┘   └────────────────────┘
+│
+├── <span class="method">converse</span>("message")  →  inject cache points  →  retry  →  track tokens  →  trim
+│
+▼
+<span class="highlight">BedrockRuntimeClient.converse()</span>  (low-level Converse API)</div>
+</div>
+
+<!-- SLIDE 6: Context Window Strategies -->
+<div class="slide">
+    <div class="glow-br"></div>
+    <h2>Context Window <span>Management Strategies</span></h2>
+    <p>When the context window cap is reached, the enhanced client automatically applies one of these strategies:</p>
+    <table class="comparison-table">
+        <tr>
+            <th>Strategy</th>
+            <th>Behavior</th>
+            <th>Trade-off</th>
+        </tr>
+        <tr>
+            <td class="strategy-name sliding-color">SLIDING_WINDOW</td>
+            <td>Drops oldest user/assistant pairs</td>
+            <td>Simple, loses old context</td>
+        </tr>
+        <tr>
+            <td class="strategy-name summarize-color">SUMMARIZE</td>
+            <td>Calls model to summarize older messages</td>
+            <td>Preserves semantics, extra API call</td>
+        </tr>
+        <tr>
+            <td class="strategy-name" style="color:#60a5fa;">CHUNKED</td>
+            <td>Keeps most recent N chunks of M messages</td>
+            <td>Predictable boundaries</td>
+        </tr>
+        <tr>
+            <td class="strategy-name cost-opt-color">COST_OPTIMIZED</td>
+            <td>Coordinates trimming with prompt caching</td>
+            <td>Lowest cost per turn, uses cache</td>
+        </tr>
+        <tr>
+            <td class="strategy-name default-color">DROP_OLDEST_KEEP_LAST</td>
+            <td>Keeps only the latest message</td>
+            <td>Aggressive reset, stateless Q&A</td>
+        </tr>
+    </table>
+</div>
+
+<!-- SLIDE 7: Cost Optimized Deep Dive -->
+<div class="slide">
+    <div class="glow-center"></div>
+    <h2>Deep Dive: <span>COST_OPTIMIZED</span> Strategy <span class="badge green">Recommended</span></h2>
+    <p>The smartest strategy — coordinates context trimming with Bedrock's prompt caching to minimize the average cost per turn.</p>
+    <ul class="solution-list">
+        <li><strong>Automatic cache checkpoints</strong> — Inserts CachePointBlock after the last assistant message each turn. The conversation prefix becomes cacheable.</li>
+        <li><strong>Cache-read pricing</strong> — Subsequent turns pay ~10% of normal input rate for cached prefix tokens (e.g., $0.30/MTok vs $3.00/MTok for Sonnet).</li>
+        <li><strong>Bulk trimming</strong> — When uncached tokens exceed a threshold, trims down to half capacity and freezes remaining turns as a cacheable prefix.</li>
+        <li><strong>Zero code changes</strong> — Just set <code>trimStrategy(COST_OPTIMIZED)</code> and <code>promptCaching(enabled: true)</code>. Everything else is automatic.</li>
+    </ul>
+</div>
+
+<!-- SLIDE 8: Demo Transition -->
+<div class="slide slide-demo">
+    <div class="glow-center"></div>
+    <div class="demo-icon">🎬</div>
+    <h2>Live Demo</h2>
+    <p>Comparing three approaches side-by-side over a 20-turn conversation:</p>
+    <div class="strategy-grid" style="margin-top: 40px; max-width: 960px;">
+        <div class="strategy-card default">
+            <h4>Default</h4>
+            <p>No context management. Full history sent every turn. Cost grows unbounded.</p>
+        </div>
+        <div class="strategy-card sliding">
+            <h4>Sliding Window</h4>
+            <p>Drops oldest messages at cap. Bounded cost, loses old context.</p>
+        </div>
+        <div class="strategy-card cost-opt">
+            <h4>Cost Optimized</h4>
+            <p>Smart trimming + prompt caching. Lowest cost per turn.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Navigation -->
+<div class="slide-counter" id="counter">1 / 8</div>
+
+<script>
+    const slides = document.querySelectorAll('.slide');
+    let current = 0;
+
+    function showSlide(n) {
+        slides[current].classList.remove('active');
+        current = (n + slides.length) % slides.length;
+        slides[current].classList.add('active');
+        document.getElementById('counter').textContent = (current + 1) + ' / ' + slides.length;
+        document.getElementById('progressBar').style.width = ((current + 1) / slides.length * 100) + '%';
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === ' ') {
+            e.preventDefault();
+            showSlide(current + 1);
+        } else if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            showSlide(current - 1);
+        }
+    });
+
+    // Click to advance (right half forward, left half back)
+    document.addEventListener('click', (e) => {
+        if (e.clientX > window.innerWidth / 2) {
+            showSlide(current + 1);
+        } else {
+            showSlide(current - 1);
+        }
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>software.amazon.awssdk.enhanced</groupId>
+    <artifactId>bedrock-enhanced-parent</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>Bedrock Enhanced Client</name>
+    <description>
+        High-level client for Amazon Bedrock Runtime with conversation context window management,
+        token tracking, prompt caching, cost estimation, and enhanced retry policies.
+    </description>
+
+    <modules>
+        <module>bedrock-enhanced</module>
+        <module>bedrock-enhanced-demo</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <aws.sdk.version>2.42.20</aws.sdk.version>
+        <junit.version>5.10.2</junit.version>
+        <mockito.version>5.14.2</mockito.version>
+        <assertj.version>3.25.3</assertj.version>
+        <spring.boot.version>2.7.18</spring.boot.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws.sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>
