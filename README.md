@@ -53,6 +53,12 @@ System.out.println("Cache savings: $" + cost.cacheReadSavings());
 ### Cost Optimized Strategies
 
 - Uses a threshold formula: `T = 2 × S_eff × (α − β)` to decide when to trim
+  - **S_eff** = effective cached prefix size (system prompt tokens + frozen floor tokens)
+  - **α** (alpha) = cache write cost multiplier relative to normal input. Represents the one-time cost of writing tokens to cache. Value depends on model's cache TTL:
+    - `1.25` for 5-minute TTL models (Sonnet 4, Haiku 4.5)
+    - `2.00` for 1-hour TTL models (Sonnet 4.5)
+  - **β** (beta) = cache read cost multiplier relative to normal input. Represents the per-turn savings from reading cached tokens: `0.10` (90% cheaper than uncached input)
+  - The formula balances: "how much does it cost to write to cache" vs "how much do we save per turn by reading from cache"
 - After trim, remaining messages are frozen as a cacheable prefix
 - Subsequent turns pay ~10% of normal input rate for cached prefix tokens
 - **Caching is enabled by default** when using cost-optimized strategies (user can explicitly disable)
