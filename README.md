@@ -62,6 +62,49 @@ System.out.println("Cache savings: $" + cost.cacheReadSavings());
 - Includes prior summaries in the new summarization (rolling summary)
 - Result is always: `[summary] + [last C messages]`
 
+## Retries and Rate Limiting
+
+### Bedrock-Specific Retries
+
+Standard SDK retries use the same backoff for all errors. The enhanced client uses separate strategies for different Bedrock failure modes:
+
+| Exception | Base Delay | Behavior |
+|-----------|-----------|----------|
+| `ThrottlingException` (429) | 2 seconds | Longer backoff — respects rate limits |
+| `ModelNotReadyException` | 500ms | Cold start — model warming up |
+| `ModelTimeoutException` | 500ms | Transient timeout — retry usually works |
+| `ServiceUnavailableException` | 500ms | Brief outage — wait and retry |
+
+Backoff uses **full-jitter exponential**: `actualDelay = random(0, min(baseDelay × 2^attempt, maxBackoff))`. This prevents thundering herd when multiple clients are throttled simultaneously.
+
+```java
+BedrockEnhancedClient client = BedrockEnhancedClient.builder()
+    .retryConfig(r -> r.maxRetries(5)
+                       .baseDelay(Duration.ofMillis(500))
+                       .throttleBaseDelay(Duration.ofSeconds(2))
+                       .maxBackoff(Duration.ofSeconds(30))
+                       .retryOnModelNotReady(true))
+    .build();
+```
+
+### Client-Side Rate Limiting
+
+Proactively prevents throttling by limiting request rate before hitting the server:
+
+```java
+BedrockEnhancedClient client = BedrockEnhancedClient.builder()
+    .throttlingConfig(t -> t.maxRequestsPerSecond(10.0)
+                           .adaptiveEnabled(true))
+    .build();
+```
+
+**Adaptive mode** (enabled by default):
+- On throttle (429): rate is halved immediately
+- On success: rate increases by 10% of max, gradually recovering
+- Creates a feedback loop that auto-tunes to your account's actual limits
+
+**How they work together:** The rate limiter prevents most throttling. The retry handler catches cases that slip through. On each throttle event, the retry handler backs off AND the rate limiter reduces its rate — so subsequent requests from all sessions are also slowed.
+
 ## Features
 
 - **Context window management** — 4 strategies with token-based and message-based limits
