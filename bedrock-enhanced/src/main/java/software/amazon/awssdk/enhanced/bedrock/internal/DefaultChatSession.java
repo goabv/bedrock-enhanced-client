@@ -66,6 +66,7 @@ public final class DefaultChatSession implements ChatSession {
     private long totalCacheReadTokens;
     private long totalCacheWriteTokens;
     private int turnCount;
+    private int lastContextWindowSize;
 
     DefaultChatSession(BedrockRuntimeClient client,
                        String modelId,
@@ -170,10 +171,7 @@ public final class DefaultChatSession implements ChatSession {
 
     @Override
     public int contextWindowTokenCount() {
-        if (costOptimizedManager != null) {
-            return costOptimizedManager.totalHistoryTokens();
-        }
-        return contextWindowManager.displayTokenCount();
+        return lastContextWindowSize;
     }
 
     @Override
@@ -195,6 +193,7 @@ public final class DefaultChatSession implements ChatSession {
         totalCacheReadTokens = 0;
         totalCacheWriteTokens = 0;
         turnCount = 0;
+        lastContextWindowSize = 0;
         log.debug(() -> "Session reset [modelId=" + modelId + "]");
     }
 
@@ -276,6 +275,7 @@ public final class DefaultChatSession implements ChatSession {
             int cacheRead = usage.cacheReadInputTokens() != null ? usage.cacheReadInputTokens() : 0;
             int cacheWrite = usage.cacheWriteInputTokens() != null ? usage.cacheWriteInputTokens() : 0;
             int fullInput = usage.inputTokens() + cacheRead + cacheWrite;
+            lastContextWindowSize = fullInput;
             totalInputTokens += fullInput;
             totalOutputTokens += usage.outputTokens();
             if (usage.cacheReadInputTokens() != null) {
