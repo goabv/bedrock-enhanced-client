@@ -207,6 +207,13 @@ public interface BedrockEnhancedClient extends SdkAutoCloseable {
         Builder pricingProvider(PricingProvider pricingProvider);
 
         /**
+         * Sets the optional conversation cost budget. Applies across all strategies
+         * (including {@link ContextWindowConfig.ContextStrategy} = no trimming) and at the
+         * session level. When unset or {@link CostBudgetConfig.Mode#OFF}, no budget logic runs.
+         */
+        Builder costBudgetConfig(CostBudgetConfig costBudgetConfig);
+
+        /**
          * Builds the {@link BedrockEnhancedClient}.
          *
          * @return A configured client instance.

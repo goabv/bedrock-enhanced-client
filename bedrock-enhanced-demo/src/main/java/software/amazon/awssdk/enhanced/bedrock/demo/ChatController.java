@@ -28,6 +28,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import software.amazon.awssdk.enhanced.bedrock.BudgetStatus;
 import software.amazon.awssdk.enhanced.bedrock.ChatResponse;
 import software.amazon.awssdk.enhanced.bedrock.ChatSession;
 import software.amazon.awssdk.enhanced.bedrock.CostEstimate;
@@ -150,6 +151,15 @@ public class ChatController {
             result.setContextWindowTokens(session.contextWindowTokenCount());
             result.setMessageCount(chatResp.conversationMessageCount());
 
+            // Optional budget snapshot
+            BudgetStatus bs = session.budgetStatus();
+            if (bs != null) {
+                result.setBudget(bs.budget());
+                result.setBudgetSpent(bs.spentSoFar());
+                result.setBudgetRemaining(bs.remaining());
+                result.setBudgetMode(bs.mode());
+            }
+
             results.put(name, result);
             turnCount = chatResp.sessionTokenUsage().turnCount();
         }
@@ -230,6 +240,10 @@ public class ChatController {
         private double cacheReadSavings;
         private int contextWindowTokens;
         private int messageCount;
+        private Double budget;
+        private Double budgetSpent;
+        private Double budgetRemaining;
+        private String budgetMode;
 
         public String getName() { return name; }
         public void setName(String v) { this.name = v; }
@@ -255,6 +269,14 @@ public class ChatController {
         public void setContextWindowTokens(int v) { this.contextWindowTokens = v; }
         public int getMessageCount() { return messageCount; }
         public void setMessageCount(int v) { this.messageCount = v; }
+        public Double getBudget() { return budget; }
+        public void setBudget(Double v) { this.budget = v; }
+        public Double getBudgetSpent() { return budgetSpent; }
+        public void setBudgetSpent(Double v) { this.budgetSpent = v; }
+        public Double getBudgetRemaining() { return budgetRemaining; }
+        public void setBudgetRemaining(Double v) { this.budgetRemaining = v; }
+        public String getBudgetMode() { return budgetMode; }
+        public void setBudgetMode(String v) { this.budgetMode = v; }
     }
 
     public static class TurnMetrics {

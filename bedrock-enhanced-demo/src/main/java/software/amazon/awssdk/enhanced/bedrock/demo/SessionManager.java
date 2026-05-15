@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
 import software.amazon.awssdk.enhanced.bedrock.BedrockEnhancedClient;
 import software.amazon.awssdk.enhanced.bedrock.ChatSession;
 import software.amazon.awssdk.enhanced.bedrock.ContextWindowConfig;
+import software.amazon.awssdk.enhanced.bedrock.CostBudgetConfig;
 import software.amazon.awssdk.enhanced.bedrock.CreateSessionRequest;
 import software.amazon.awssdk.enhanced.bedrock.PricingProvider;
 import software.amazon.awssdk.enhanced.bedrock.PromptCachingConfig;
@@ -140,6 +141,22 @@ public class SessionManager {
         BedrockEnhancedClient.Builder builder = BedrockEnhancedClient.builder()
             .bedrockRuntimeClient(runtimeClient)
             .pricingProvider(PricingProvider.builtIn());
+
+        // Optional cost budget — applies to ALL strategies including Default
+        if (cfg.getConversationCostBudget() != null && cfg.getConversationCostBudget() > 0
+            && cfg.getCostBudgetMode() != null
+            && !"OFF".equalsIgnoreCase(cfg.getCostBudgetMode())) {
+            CostBudgetConfig.Mode mode;
+            try {
+                mode = CostBudgetConfig.Mode.valueOf(cfg.getCostBudgetMode().toUpperCase());
+            } catch (IllegalArgumentException ex) {
+                mode = CostBudgetConfig.Mode.WARN;
+            }
+            builder.costBudgetConfig(CostBudgetConfig.builder()
+                .budget(cfg.getConversationCostBudget())
+                .mode(mode)
+                .build());
+        }
 
         // Prompt caching
         builder.promptCachingConfig(PromptCachingConfig.builder()

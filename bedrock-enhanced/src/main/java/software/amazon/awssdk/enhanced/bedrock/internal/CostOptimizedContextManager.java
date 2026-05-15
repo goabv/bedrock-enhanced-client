@@ -351,6 +351,19 @@ public final class CostOptimizedContextManager {
     }
 
     /**
+     * Forces a trim down to TARGET regardless of current H. Used by the budget layer
+     * when projected next-request cost would exceed the configured budget.
+     * No-op when current size is already at or below TARGET.
+     */
+    public void forceTrim() {
+        int h = currentRetainedSize();
+        if (h <= target) {
+            return;
+        }
+        performTrim(TrimReason.FORCED);
+    }
+
+    /**
      * Reason for the most recent trim event.
      */
     public enum TrimReason {

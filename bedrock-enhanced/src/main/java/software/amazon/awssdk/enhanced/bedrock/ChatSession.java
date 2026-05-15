@@ -121,4 +121,12 @@ public interface ChatSession {
      * Clears the conversation history and resets token tracking for this session.
      */
     void reset();
+
+    /**
+     * Returns a snapshot of the conversation cost budget for this session, or
+     * {@code null} if no budget is configured (or it's {@link CostBudgetConfig.Mode#OFF}).
+     */
+    default BudgetStatus budgetStatus() {
+        return null;
+    }
 }

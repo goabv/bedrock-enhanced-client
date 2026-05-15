@@ -191,9 +191,9 @@
         ];
 
         let strategies = [
-            { name: 'Default', strategy: 'NONE', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, targetTurns: 0, maxTurns: 0, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: false, expectedTotalTurns: null },
-            { name: 'Sliding Window', strategy: 'SLIDING_WINDOW', maxTokens: 32768, coherenceFloor: 10, maxMessages: 10, targetTurns: 0, maxTurns: 0, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: false, expectedTotalTurns: null },
-            { name: 'Cost Optimized (Caching + Trimming)', strategy: 'COST_OPTIMIZED_TRIMMING', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, targetTurns: 10, maxTurns: 20, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: true, expectedTotalTurns: null }
+            { name: 'Default', strategy: 'NONE', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, targetTurns: 0, maxTurns: 0, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: false, expectedTotalTurns: null, conversationCostBudget: null, costBudgetMode: 'OFF' },
+            { name: 'Sliding Window', strategy: 'SLIDING_WINDOW', maxTokens: 32768, coherenceFloor: 10, maxMessages: 10, targetTurns: 0, maxTurns: 0, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: false, expectedTotalTurns: null, conversationCostBudget: null, costBudgetMode: 'OFF' },
+            { name: 'Cost Optimized (Caching + Trimming)', strategy: 'COST_OPTIMIZED_TRIMMING', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, targetTurns: 10, maxTurns: 20, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: true, expectedTotalTurns: null, conversationCostBudget: null, costBudgetMode: 'OFF' }
         ];
 
         let isLoading = false;
@@ -222,6 +222,7 @@
                             <div class="metric-row"><span class="label">Output tokens</span><span class="value" id="m_output_${i}">0</span></div>
                             <div class="metric-row"><span class="label">Context window</span><span class="value" id="m_ctx_${i}">0</span></div>
                             <div class="metric-row"><span class="label">${s.cachingEnabled ? 'Cache reads' : 'Messages'}</span><span class="value ${s.cachingEnabled ? 'green' : ''}" id="m_extra_${i}">0</span></div>
+                            <div class="metric-row" id="m_budget_row_${i}" style="display:${(s.conversationCostBudget && s.costBudgetMode && s.costBudgetMode !== 'OFF') ? 'flex' : 'none'}"><span class="label">Budget</span><span class="value" id="m_budget_${i}">—</span></div>
                         </div>
                     </div>`;
             });
@@ -251,14 +252,18 @@
             const tmInfo = s.mode === 'tokens'
                 ? `T=${s.targetRecentTokens || 0} tokens, M=${s.maxRecentTokens || 0} tokens` + (s.expectedTotalTurns ? `, Nexp=${s.expectedTotalTurns}` : '')
                 : `T=${s.targetTurns || 0} turns, M=${s.maxTurns || 0} turns` + (s.expectedTotalTurns ? `, Nexp=${s.expectedTotalTurns}` : '');
+            const budgetInfo = (s.conversationCostBudget && s.costBudgetMode && s.costBudgetMode !== 'OFF')
+                ? ` · Budget=$${s.conversationCostBudget.toFixed(2)} (${s.costBudgetMode})` : '';
+            let core;
             switch(s.strategy) {
-                case 'NONE': return 'No context management — full history every turn';
-                case 'SLIDING_WINDOW': return `Drops oldest at ${s.maxTokens > 0 ? s.maxTokens + ' tokens or ' : ''}${cInfo} user msgs`;
-                case 'COST_OPTIMIZED_TRIMMING': return `Caching + TARGET/MAX trimming, ${tmInfo}`;
-                case 'COST_OPTIMIZED_SUMMARIZE': return `Caching + TARGET/MAX summarization, ${tmInfo}`;
-                case 'SUMMARIZE': return `Summarizes older messages, ${cInfo}`;
-                default: return '';
+                case 'NONE': core = 'No context management — full history every turn'; break;
+                case 'SLIDING_WINDOW': core = `Drops oldest at ${s.maxTokens > 0 ? s.maxTokens + ' tokens or ' : ''}${cInfo} user msgs`; break;
+                case 'COST_OPTIMIZED_TRIMMING': core = `Caching + TARGET/MAX trimming, ${tmInfo}`; break;
+                case 'COST_OPTIMIZED_SUMMARIZE': core = `Caching + TARGET/MAX summarization, ${tmInfo}`; break;
+                case 'SUMMARIZE': core = `Summarizes older messages, ${cInfo}`; break;
+                default: core = ''; break;
             }
+            return core + budgetInfo;
         }
 
         function getEmptyText(s) {
@@ -319,6 +324,25 @@
                 const extra = strategies[i].cachingEnabled ? result.cacheReadTokens : result.messageCount;
                 document.getElementById('m_extra_' + i).textContent = fmtNum(extra);
                 costs.push(result.totalCost);
+
+                // Budget status
+                const budgetRow = document.getElementById('m_budget_row_' + i);
+                const budgetCell = document.getElementById('m_budget_' + i);
+                if (budgetRow && budgetCell) {
+                    if (result.budget != null && result.budgetMode && result.budgetMode !== 'OFF') {
+                        budgetRow.style.display = 'flex';
+                        const spent = result.budgetSpent != null ? result.budgetSpent : 0;
+                        const budget = result.budget;
+                        const pct = budget > 0 ? Math.min(spent / budget, 1.5) * 100 : 0;
+                        const exceeded = spent > budget;
+                        budgetCell.innerHTML = '$' + spent.toFixed(4) + ' / $' + budget.toFixed(4)
+                            + ' <span style="color:' + (exceeded ? '#e85a4f' : '#7aa2f7') + '">('
+                            + pct.toFixed(0) + '%)</span>';
+                        budgetCell.className = 'value ' + (exceeded ? 'red' : '');
+                    } else {
+                        budgetRow.style.display = 'none';
+                    }
+                }
             });
 
             // Update savings bar (compare each strategy vs first)
@@ -428,6 +452,16 @@
                         <input type="hidden" id="smaxturns_${i}" value="${s.maxTurns || 0}">
                         <input type="hidden" id="sexpected_${i}" value="">
                         `}
+                        <div class="form-row" style="margin-top: 8px; border-top: 1px dashed #ccc; padding-top: 8px;">
+                            <label>Cost Budget USD (optional)<input type="number" step="0.01" id="sbudget_${i}" value="${s.conversationCostBudget != null ? s.conversationCostBudget : ''}" min="0" placeholder="e.g. 0.50"></label>
+                            <label>Budget Mode
+                                <select id="sbudgetmode_${i}">
+                                    <option value="OFF" ${(!s.costBudgetMode || s.costBudgetMode === 'OFF') ? 'selected' : ''}>Off</option>
+                                    <option value="WARN" ${s.costBudgetMode === 'WARN' ? 'selected' : ''}>Warn</option>
+                                    <option value="ENFORCE" ${s.costBudgetMode === 'ENFORCE' ? 'selected' : ''}>Enforce</option>
+                                </select>
+                            </label>
+                        </div>
                     </div>`;
             });
         }
@@ -470,7 +504,17 @@
                     targetTurns: targetEl ? (parseInt(targetEl.value) || 0) : s.targetTurns,
                     maxTurns: maxTurnsEl ? (parseInt(maxTurnsEl.value) || 0) : s.maxTurns,
                     cachingEnabled: cacheEl ? (cacheEl.type === 'checkbox' ? cacheEl.checked : cacheEl.value === 'true') : s.cachingEnabled,
-                    expectedTotalTurns: expectedVal !== '' ? parseInt(expectedVal) : (s.expectedTotalTurns != null ? s.expectedTotalTurns : null)
+                    expectedTotalTurns: expectedVal !== '' ? parseInt(expectedVal) : (s.expectedTotalTurns != null ? s.expectedTotalTurns : null),
+                    conversationCostBudget: (function() {
+                        const el = document.getElementById('sbudget_' + i);
+                        if (!el) return s.conversationCostBudget != null ? s.conversationCostBudget : null;
+                        const v = el.value.trim();
+                        return v !== '' ? parseFloat(v) : null;
+                    })(),
+                    costBudgetMode: (function() {
+                        const el = document.getElementById('sbudgetmode_' + i);
+                        return el ? el.value : (s.costBudgetMode || 'OFF');
+                    })()
                 };
             });
 
@@ -503,7 +547,7 @@
         }
 
         function addStrategyForm() {
-            strategies.push({ name: 'New Strategy', strategy: 'SLIDING_WINDOW', maxTokens: 0, coherenceFloor: 10, maxMessages: 10, targetTurns: 0, maxTurns: 0, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: false, expectedTotalTurns: null });
+            strategies.push({ name: 'New Strategy', strategy: 'SLIDING_WINDOW', maxTokens: 0, coherenceFloor: 10, maxMessages: 10, targetTurns: 0, maxTurns: 0, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: false, expectedTotalTurns: null, conversationCostBudget: null, costBudgetMode: 'OFF' });
             renderConfigForms();
         }
 
@@ -537,7 +581,17 @@
                     maxRecentTokens: s.maxRecentTokens != null ? s.maxRecentTokens : null,
                     mode: mode,
                     cachingEnabled: cachingEnabled,
-                    expectedTotalTurns: expectedVal !== '' ? parseInt(expectedVal) : null
+                    expectedTotalTurns: expectedVal !== '' ? parseInt(expectedVal) : null,
+                    conversationCostBudget: (function() {
+                        const el = document.getElementById('sbudget_' + i);
+                        if (!el) return null;
+                        const v = el.value.trim();
+                        return v !== '' ? parseFloat(v) : null;
+                    })(),
+                    costBudgetMode: (function() {
+                        const el = document.getElementById('sbudgetmode_' + i);
+                        return el ? el.value : 'OFF';
+                    })()
                 };
                 if (mode === 'tokens') {
                     updated.targetRecentTokens = targetVal;

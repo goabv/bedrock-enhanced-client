@@ -20,6 +20,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
 import software.amazon.awssdk.annotations.SdkInternalApi;
+import software.amazon.awssdk.enhanced.bedrock.BudgetStatus;
 import software.amazon.awssdk.enhanced.bedrock.ChatResponse;
 import software.amazon.awssdk.enhanced.bedrock.ChatSession;
 import software.amazon.awssdk.enhanced.bedrock.CostEstimate;
@@ -60,6 +61,7 @@ public final class DefaultChatSession implements ChatSession {
     private final TokenBucketRateLimiter rateLimiter;
     private final PromptCachingConfig promptCachingConfig;
     private final PricingProvider pricingProvider;
+    private final BudgetTracker budgetTracker;
 
     private long totalInputTokens;
     private long totalOutputTokens;
@@ -78,7 +80,8 @@ public final class DefaultChatSession implements ChatSession {
                        BedrockRetryHandler retryHandler,
                        TokenBucketRateLimiter rateLimiter,
                        PromptCachingConfig promptCachingConfig,
-                       PricingProvider pricingProvider) {
+                       PricingProvider pricingProvider,
+                       BudgetTracker budgetTracker) {
         this.client = client;
         this.modelId = modelId;
         this.systemPrompts = systemPrompts;
@@ -90,6 +93,7 @@ public final class DefaultChatSession implements ChatSession {
         this.rateLimiter = rateLimiter;
         this.promptCachingConfig = promptCachingConfig;
         this.pricingProvider = pricingProvider;
+        this.budgetTracker = budgetTracker;
     }
 
     @Override
@@ -199,6 +203,7 @@ public final class DefaultChatSession implements ChatSession {
 
     private ChatResponse doConverse(Consumer<ConverseRequest.Builder> requestOverride, Message pendingUserMessage) {
         checkTokenBudget();
+        checkCostBudgetBeforeRequest();
 
         if (rateLimiter != null) {
             rateLimiter.acquire();
@@ -289,6 +294,12 @@ public final class DefaultChatSession implements ChatSession {
             if (costOptimizedManager == null) {
                 contextWindowManager.updateTokenCountAndTrim(fullInput, usage.outputTokens());
             }
+
+            // Budget tracking: record actual spend
+            if (budgetTracker != null) {
+                budgetTracker.recordTurn(
+                    usage.inputTokens(), cacheRead, cacheWrite, usage.outputTokens());
+            }
         }
         turnCount++;
 
@@ -315,6 +326,60 @@ public final class DefaultChatSession implements ChatSession {
                     .build();
             }
         }
+    }
+
+    /**
+     * Checks the optional conversation cost budget before issuing a request.
+     * <ul>
+     *   <li>OFF / null tracker: no-op.</li>
+     *   <li>WARN: logs a warning when projected next-request cost exceeds remaining budget.</li>
+     *   <li>ENFORCE: tries to force a trim (when the strategy supports it) and re-checks.
+     *       If still unaffordable, throws {@link software.amazon.awssdk.enhanced.bedrock.BudgetExceededException}.</li>
+     * </ul>
+     */
+    private void checkCostBudgetBeforeRequest() {
+        if (budgetTracker == null) {
+            return;
+        }
+        // Use the last recorded full input as a rough estimate of the next prefix size.
+        // This is the cached portion of the conversation we expect to send.
+        int prefixTokens = lastContextWindowSize;
+        boolean canTrim = costOptimizedManager != null;
+
+        BudgetTracker.Action action = budgetTracker.checkBeforeRequest(canTrim, prefixTokens, false);
+        switch (action) {
+            case PROCEED:
+            case WARN:
+                return;
+            case TRIM_AND_RECHECK:
+                if (costOptimizedManager != null) {
+                    costOptimizedManager.forceTrim();
+                    int newPrefix = costOptimizedManager.totalHistoryTokens();
+                    // Re-check; this throws BudgetExceededException in ENFORCE mode if still unaffordable.
+                    budgetTracker.recheckAfterTrim(newPrefix, true);
+                } else {
+                    // Should not happen — checkBeforeRequest only returns TRIM_AND_RECHECK when canTrim==true
+                    budgetTracker.recheckAfterTrim(prefixTokens, false);
+                }
+                return;
+            case FAIL:
+                budgetTracker.recheckAfterTrim(prefixTokens, false);
+                return;
+            default:
+                return;
+        }
+    }
+
+    @Override
+    public BudgetStatus budgetStatus() {
+        if (budgetTracker == null) {
+            return null;
+        }
+        return new BudgetStatus(
+            budgetTracker.spentSoFar(),
+            budgetTracker.budget(),
+            budgetTracker.remainingBudget(),
+            budgetTracker.mode().name());
     }
 
     /**

@@ -21,6 +21,7 @@ import software.amazon.awssdk.enhanced.bedrock.BedrockEnhancedClient;
 import software.amazon.awssdk.enhanced.bedrock.BedrockRetryConfig;
 import software.amazon.awssdk.enhanced.bedrock.ChatSession;
 import software.amazon.awssdk.enhanced.bedrock.ContextWindowConfig;
+import software.amazon.awssdk.enhanced.bedrock.CostBudgetConfig;
 import software.amazon.awssdk.enhanced.bedrock.CreateSessionRequest;
 import software.amazon.awssdk.enhanced.bedrock.PricingProvider;
 import software.amazon.awssdk.enhanced.bedrock.PromptCachingConfig;
@@ -50,6 +51,7 @@ public final class DefaultBedrockEnhancedClient implements BedrockEnhancedClient
     private final BedrockRetryConfig retryConfig;
     private final PromptCachingConfig promptCachingConfig;
     private final PricingProvider pricingProvider;
+    private final CostBudgetConfig costBudgetConfig;
     private final TokenBucketRateLimiter rateLimiter;
 
     private DefaultBedrockEnhancedClient(DefaultBuilder builder) {
@@ -83,6 +85,7 @@ public final class DefaultBedrockEnhancedClient implements BedrockEnhancedClient
         }
 
         this.pricingProvider = builder.pricingProvider;
+        this.costBudgetConfig = builder.costBudgetConfig;
 
         this.throttlingConfig = builder.throttlingConfig;
 
@@ -159,6 +162,14 @@ public final class DefaultBedrockEnhancedClient implements BedrockEnhancedClient
                         + ", contextWindow=" + sessionContextConfig
                         + ", tokenBudget=" + request.tokenBudget() + "]");
 
+        // Build budget tracker if configured
+        BudgetTracker budgetTracker = null;
+        if (costBudgetConfig != null && costBudgetConfig.mode() != CostBudgetConfig.Mode.OFF) {
+            budgetTracker = new BudgetTracker(
+                costBudgetConfig, pricingProvider, request.modelId(),
+                sessionContextConfig.expectedTotalTurns());
+        }
+
         return new DefaultChatSession(
             bedrockRuntimeClient,
             request.modelId(),
@@ -170,7 +181,8 @@ public final class DefaultBedrockEnhancedClient implements BedrockEnhancedClient
             retryHandler,
             rateLimiter,
             promptCachingConfig,
-            pricingProvider
+            pricingProvider,
+            budgetTracker
         );
     }
 
@@ -229,6 +241,7 @@ public final class DefaultBedrockEnhancedClient implements BedrockEnhancedClient
         private BedrockRetryConfig retryConfig;
         private PromptCachingConfig promptCachingConfig;
         private PricingProvider pricingProvider;
+        private CostBudgetConfig costBudgetConfig;
 
         private DefaultBuilder() {
         }
@@ -266,6 +279,12 @@ public final class DefaultBedrockEnhancedClient implements BedrockEnhancedClient
         @Override
         public Builder pricingProvider(PricingProvider pricingProvider) {
             this.pricingProvider = pricingProvider;
+            return this;
+        }
+
+        @Override
+        public Builder costBudgetConfig(CostBudgetConfig costBudgetConfig) {
+            this.costBudgetConfig = costBudgetConfig;
             return this;
         }
 

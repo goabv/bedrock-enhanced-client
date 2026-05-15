@@ -34,6 +34,8 @@ public class StrategyConfig {
     private Integer maxRecentTokens;    // cost-optimized token mode: M (preferred)
     private boolean cachingEnabled;
     private Integer expectedTotalTurns;
+    private Double conversationCostBudget;   // optional USD budget
+    private String costBudgetMode;           // "OFF" | "WARN" | "ENFORCE"
 
     public StrategyConfig() {
     }
@@ -60,4 +62,8 @@ public class StrategyConfig {
     public void setCachingEnabled(boolean v) { this.cachingEnabled = v; }
     public Integer getExpectedTotalTurns() { return expectedTotalTurns; }
     public void setExpectedTotalTurns(Integer v) { this.expectedTotalTurns = v; }
+    public Double getConversationCostBudget() { return conversationCostBudget; }
+    public void setConversationCostBudget(Double v) { this.conversationCostBudget = v; }
+    public String getCostBudgetMode() { return costBudgetMode; }
+    public void setCostBudgetMode(String v) { this.costBudgetMode = v; }
 }

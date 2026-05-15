@@ -148,10 +148,38 @@ BedrockEnhancedClient client = BedrockEnhancedClient.builder()
 - **Automatic prompt caching** — Inserts CachePointBlock markers transparently for cost-optimized strategies
 - **Real-time cost tracking** — Per-session CostEstimate with differentiated cache read/write rates
 - **Token budget enforcement** — Hard cap on total session spend
+- **Conversation cost budget** — Optional USD budget that applies across all strategies (Default included), with WARN or ENFORCE modes
 - **Model-aware throttling** — Token-per-minute tracking with adaptive backoff
 - **Bedrock-specific retries** — Separate policies for throttling (429) vs transient errors (5xx)
 - **Time-based message expiry** — Auto-expire messages older than a configurable duration
 - **Model-agnostic API** — Hides per-model differences behind a single interface
+
+## Conversation Cost Budget (optional)
+
+A budget is an orthogonal layer that wraps any strategy — including `NONE` (no context management). It tracks actual spend after every response and, when the strategy supports it, can trigger an early trim before sending the next request to keep total spend within the configured ceiling.
+
+```java
+BedrockEnhancedClient client = BedrockEnhancedClient.builder()
+    .pricingProvider(PricingProvider.builtIn())
+    .costBudgetConfig(b -> b.budget(0.50)             // USD
+                            .mode(CostBudgetConfig.Mode.ENFORCE))
+    .contextWindowConfig(c -> c.contextStrategy(
+        ContextWindowConfig.ContextStrategy.COST_OPTIMIZED_TRIMMING))
+    .build();
+
+ChatSession session = client.createSession(modelId);
+BudgetStatus status = session.budgetStatus(); // spentSoFar / budget / remaining / mode
+```
+
+**Modes:**
+- `OFF` — budget tracked but no action taken (equivalent to no budget)
+- `WARN` — logs a warning when projected next-request cost would exceed the budget
+- `ENFORCE` — attempts a corrective trim (when the strategy supports it). If projected cost still exceeds the remaining budget, throws `BudgetExceededException`
+
+**Notes:**
+- Without `expectedTotalTurns`, only actual spend and per-request affordability are tracked (no full-conversation forecast).
+- With `expectedTotalTurns`, a forward-looking forecast is computed and used to decide between continuing, trimming early, or failing.
+- Budget never silently trims below `TARGET` (T). When `Default` strategy is used with `ENFORCE` mode, the only enforcement is via `BudgetExceededException`.
 
 ## Dependencies
 
