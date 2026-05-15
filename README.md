@@ -46,6 +46,8 @@ System.out.println("Cache savings: $" + cost.cacheReadSavings());
 | `COST_OPTIMIZED_TRIMMING` | Bulk trim at cost threshold, freeze remaining as cached prefix | Yes (auto) | No |
 | `COST_OPTIMIZED_SUMMARIZE` | Summarize at cost threshold, freeze summary as cached prefix | Yes (auto) | Yes |
 
+> **Conversation Cost Budget** is an optional, orthogonal layer that wraps any strategy with a USD ceiling. It can warn or enforce a hard cap and, paired with `COST_OPTIMIZED_*`, will trigger early trims to keep the conversation within budget. See [Conversation Cost Budget](#conversation-cost-budget-optional) under the cost-optimized section.
+
 ### Sliding Window (Cmin / Cmax)
 
 - **Cmax** (`maxMessages`) — trigger point. When message count exceeds this, trimming fires.
@@ -92,6 +94,33 @@ Else:
 **Cache placement:** A cache checkpoint is placed at the end of the active messages every turn. The entire active prompt (retained base + accumulating tail) is cached.
 
 **Caching is enabled by default** when using cost-optimized strategies (user can explicitly disable).
+
+#### Conversation Cost Budget (optional)
+
+A USD ceiling that wraps the strategy. The budget layer tracks actual spend after every response and, in `ENFORCE` mode, can trigger an early trim down to TARGET before sending the next request to keep total spend within the configured ceiling. The budget is **orthogonal** — it can also wrap `SLIDING_WINDOW`, `SUMMARIZE`, and even `NONE` (no context management), but its full power is realized with the cost-optimized strategies because they support corrective trimming.
+
+```java
+BedrockEnhancedClient client = BedrockEnhancedClient.builder()
+    .pricingProvider(PricingProvider.builtIn())
+    .costBudgetConfig(b -> b.budget(0.50)             // USD
+                            .mode(CostBudgetConfig.Mode.ENFORCE))
+    .contextWindowConfig(c -> c.contextStrategy(
+        ContextWindowConfig.ContextStrategy.COST_OPTIMIZED_TRIMMING))
+    .build();
+
+ChatSession session = client.createSession(modelId);
+BudgetStatus status = session.budgetStatus(); // spentSoFar / budget / remaining / mode
+```
+
+**Modes:**
+- `OFF` — budget tracked but no action taken (equivalent to no budget)
+- `WARN` — logs a warning when projected next-request cost would exceed the budget
+- `ENFORCE` — attempts a corrective trim (when the strategy supports it). If projected cost still exceeds the remaining budget, throws `BudgetExceededException`
+
+**Notes:**
+- Without `expectedTotalTurns`, only actual spend and per-request affordability are tracked (no full-conversation forecast).
+- With `expectedTotalTurns`, a forward-looking forecast is computed and used to decide between continuing, trimming early, or failing.
+- Budget never silently trims below `TARGET` (T). When `NONE` strategy is used with `ENFORCE` mode, the only enforcement is via `BudgetExceededException` since there is nothing to trim.
 
 ### Summarize
 
@@ -153,33 +182,6 @@ BedrockEnhancedClient client = BedrockEnhancedClient.builder()
 - **Bedrock-specific retries** — Separate policies for throttling (429) vs transient errors (5xx)
 - **Time-based message expiry** — Auto-expire messages older than a configurable duration
 - **Model-agnostic API** — Hides per-model differences behind a single interface
-
-## Conversation Cost Budget (optional)
-
-A budget is an orthogonal layer that wraps any strategy — including `NONE` (no context management). It tracks actual spend after every response and, when the strategy supports it, can trigger an early trim before sending the next request to keep total spend within the configured ceiling.
-
-```java
-BedrockEnhancedClient client = BedrockEnhancedClient.builder()
-    .pricingProvider(PricingProvider.builtIn())
-    .costBudgetConfig(b -> b.budget(0.50)             // USD
-                            .mode(CostBudgetConfig.Mode.ENFORCE))
-    .contextWindowConfig(c -> c.contextStrategy(
-        ContextWindowConfig.ContextStrategy.COST_OPTIMIZED_TRIMMING))
-    .build();
-
-ChatSession session = client.createSession(modelId);
-BudgetStatus status = session.budgetStatus(); // spentSoFar / budget / remaining / mode
-```
-
-**Modes:**
-- `OFF` — budget tracked but no action taken (equivalent to no budget)
-- `WARN` — logs a warning when projected next-request cost would exceed the budget
-- `ENFORCE` — attempts a corrective trim (when the strategy supports it). If projected cost still exceeds the remaining budget, throws `BudgetExceededException`
-
-**Notes:**
-- Without `expectedTotalTurns`, only actual spend and per-request affordability are tracked (no full-conversation forecast).
-- With `expectedTotalTurns`, a forward-looking forecast is computed and used to decide between continuing, trimming early, or failing.
-- Budget never silently trims below `TARGET` (T). When `Default` strategy is used with `ENFORCE` mode, the only enforcement is via `BudgetExceededException`.
 
 ## Dependencies
 
