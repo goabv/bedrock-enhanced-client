@@ -83,6 +83,15 @@
         .col-header .cost-badge { font-size: 16px; font-weight: 700; color: #f0f6fc; }
         .col-header .strategy-desc { font-size: 10px; color: #8b949e; }
 
+        .budget-bar { margin-top: 8px; padding: 6px 8px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; }
+        .budget-bar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 10px; }
+        .budget-bar-label { text-transform: uppercase; letter-spacing: 0.4px; color: #8b949e; font-weight: 600; }
+        .budget-bar-value { color: #f0f6fc; font-weight: 700; font-size: 11px; }
+        .budget-bar-track { height: 8px; background: #0d1117; border-radius: 4px; overflow: hidden; }
+        .budget-bar-fill { height: 100%; background: linear-gradient(90deg, #3fb950 0%, #f7c948 70%, #e85a4f 100%); transition: width 0.4s ease; border-radius: 4px; }
+        .budget-bar.exceeded .budget-bar-fill { background: #e85a4f; }
+        .budget-bar.exceeded .budget-bar-value { color: #e85a4f; }
+
         .col-messages { flex: 1; overflow-y: auto; padding: 8px 10px; }
         .turn-block { margin-bottom: 10px; animation: fadeIn 0.3s ease; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
@@ -213,6 +222,13 @@
                                 <span class="cost-badge" id="cost_${i}">$0.0000</span>
                             </div>
                             <div class="strategy-desc">${getDesc(s)}</div>
+                            <div class="budget-bar" id="budget_bar_${i}" style="display:${(s.conversationCostBudget && s.costBudgetMode && s.costBudgetMode !== 'OFF') ? 'block' : 'none'}">
+                                <div class="budget-bar-header">
+                                    <span class="budget-bar-label" id="budget_bar_label_${i}">Budget · ${s.costBudgetMode || 'OFF'}</span>
+                                    <span class="budget-bar-value" id="budget_bar_value_${i}">$0.00 / $${(s.conversationCostBudget || 0).toFixed(2)} (0%)</span>
+                                </div>
+                                <div class="budget-bar-track"><div class="budget-bar-fill" id="budget_bar_fill_${i}" style="width:0%"></div></div>
+                            </div>
                         </div>
                         <div class="col-messages" id="msgs_${i}">
                             <div class="empty-state"><p>${getEmptyText(s)}</p></div>
@@ -222,7 +238,6 @@
                             <div class="metric-row"><span class="label">Output tokens</span><span class="value" id="m_output_${i}">0</span></div>
                             <div class="metric-row"><span class="label">Context window</span><span class="value" id="m_ctx_${i}">0</span></div>
                             <div class="metric-row"><span class="label">${s.cachingEnabled ? 'Cache reads' : 'Messages'}</span><span class="value ${s.cachingEnabled ? 'green' : ''}" id="m_extra_${i}">0</span></div>
-                            <div class="metric-row" id="m_budget_row_${i}" style="display:${(s.conversationCostBudget && s.costBudgetMode && s.costBudgetMode !== 'OFF') ? 'flex' : 'none'}"><span class="label">Budget</span><span class="value" id="m_budget_${i}">—</span></div>
                         </div>
                     </div>`;
             });
@@ -310,12 +325,46 @@
             input.focus();
         }
 
+        function updateBudgetBar(i, result, errored) {
+            const bar = document.getElementById('budget_bar_' + i);
+            const valueEl = document.getElementById('budget_bar_value_' + i);
+            const fillEl = document.getElementById('budget_bar_fill_' + i);
+            const labelEl = document.getElementById('budget_bar_label_' + i);
+            if (!bar || !valueEl || !fillEl) return;
+            if (result.budget == null || !result.budgetMode || result.budgetMode === 'OFF') {
+                bar.style.display = 'none';
+                return;
+            }
+            bar.style.display = 'block';
+            const spent = result.budgetSpent != null ? result.budgetSpent : 0;
+            const budget = result.budget;
+            const pct = budget > 0 ? (spent / budget) * 100 : 0;
+            const exceeded = spent > budget || errored;
+            const fillPct = Math.min(pct, 100);
+            fillEl.style.width = fillPct.toFixed(1) + '%';
+            const tag = exceeded ? ' EXCEEDED' : '';
+            valueEl.textContent = '$' + spent.toFixed(4) + ' / $' + budget.toFixed(2) + ' (' + pct.toFixed(0) + '%)' + tag;
+            if (labelEl) labelEl.textContent = 'Budget · ' + (result.budgetMode || 'OFF');
+            if (exceeded) {
+                bar.classList.add('exceeded');
+            } else {
+                bar.classList.remove('exceeded');
+            }
+        }
+
         function updateFromResponse(data) {
             const names = strategies.map(s => s.name);
             let costs = [];
             names.forEach((name, i) => {
                 const result = data.results[name];
                 if (!result) { replaceLastAssistant(i, '(no result)'); costs.push(0); return; }
+                if (result.error) {
+                    replaceLastAssistant(i, '⚠ ' + result.error);
+                    costs.push(0);
+                    // Still surface budget snapshot if available
+                    updateBudgetBar(i, result, true);
+                    return;
+                }
                 replaceLastAssistant(i, result.responseText);
                 document.getElementById('cost_' + i).textContent = '$' + result.totalCost.toFixed(4);
                 document.getElementById('m_input_' + i).textContent = fmtNum(result.inputTokens);
@@ -325,24 +374,8 @@
                 document.getElementById('m_extra_' + i).textContent = fmtNum(extra);
                 costs.push(result.totalCost);
 
-                // Budget status
-                const budgetRow = document.getElementById('m_budget_row_' + i);
-                const budgetCell = document.getElementById('m_budget_' + i);
-                if (budgetRow && budgetCell) {
-                    if (result.budget != null && result.budgetMode && result.budgetMode !== 'OFF') {
-                        budgetRow.style.display = 'flex';
-                        const spent = result.budgetSpent != null ? result.budgetSpent : 0;
-                        const budget = result.budget;
-                        const pct = budget > 0 ? Math.min(spent / budget, 1.5) * 100 : 0;
-                        const exceeded = spent > budget;
-                        budgetCell.innerHTML = '$' + spent.toFixed(4) + ' / $' + budget.toFixed(4)
-                            + ' <span style="color:' + (exceeded ? '#e85a4f' : '#7aa2f7') + '">('
-                            + pct.toFixed(0) + '%)</span>';
-                        budgetCell.className = 'value ' + (exceeded ? 'red' : '');
-                    } else {
-                        budgetRow.style.display = 'none';
-                    }
-                }
+                // Budget status bar (top of column)
+                updateBudgetBar(i, result, false);
             });
 
             // Update savings bar (compare each strategy vs first)
@@ -453,14 +486,18 @@
                         <input type="hidden" id="sexpected_${i}" value="">
                         `}
                         <div class="form-row" style="margin-top: 8px; border-top: 1px dashed #ccc; padding-top: 8px;">
-                            <label>Cost Budget USD (optional)<input type="number" step="0.01" id="sbudget_${i}" value="${s.conversationCostBudget != null ? s.conversationCostBudget : ''}" min="0" placeholder="e.g. 0.50"></label>
                             <label>Budget Mode
-                                <select id="sbudgetmode_${i}">
-                                    <option value="OFF" ${(!s.costBudgetMode || s.costBudgetMode === 'OFF') ? 'selected' : ''}>Off</option>
+                                <select id="sbudgetmode_${i}" onchange="onBudgetModeChange(${i})">
+                                    <option value="OFF" ${(!s.costBudgetMode || s.costBudgetMode === 'OFF') ? 'selected' : ''}>Off (no budget)</option>
                                     <option value="WARN" ${s.costBudgetMode === 'WARN' ? 'selected' : ''}>Warn</option>
                                     <option value="ENFORCE" ${s.costBudgetMode === 'ENFORCE' ? 'selected' : ''}>Enforce</option>
                                 </select>
                             </label>
+                            ${(s.costBudgetMode && s.costBudgetMode !== 'OFF') ? `
+                            <label>Cost Budget USD<input type="number" step="0.01" id="sbudget_${i}" value="${s.conversationCostBudget != null ? s.conversationCostBudget : ''}" min="0" placeholder="e.g. 0.50"></label>
+                            ` : `
+                            <input type="hidden" id="sbudget_${i}" value="">
+                            `}
                         </div>
                     </div>`;
             });
@@ -479,6 +516,18 @@
                 strategies[idx].maxRecentTokens = parseInt(maxEl.value) || 10000;
             }
             strategies[idx].mode = newMode;
+            renderConfigForms();
+        }
+
+        function onBudgetModeChange(idx) {
+            const newMode = document.getElementById('sbudgetmode_' + idx).value;
+            // Save current budget value before re-rendering
+            const budgetEl = document.getElementById('sbudget_' + idx);
+            if (budgetEl) {
+                const v = budgetEl.value.trim();
+                strategies[idx].conversationCostBudget = v !== '' ? parseFloat(v) : null;
+            }
+            strategies[idx].costBudgetMode = newMode;
             renderConfigForms();
         }
 
@@ -508,8 +557,9 @@
                     conversationCostBudget: (function() {
                         const el = document.getElementById('sbudget_' + i);
                         if (!el) return s.conversationCostBudget != null ? s.conversationCostBudget : null;
-                        const v = el.value.trim();
-                        return v !== '' ? parseFloat(v) : null;
+                        const v = (el.value || '').trim();
+                        if (v !== '') return parseFloat(v);
+                        return s.conversationCostBudget != null ? s.conversationCostBudget : null;
                     })(),
                     costBudgetMode: (function() {
                         const el = document.getElementById('sbudgetmode_' + i);
@@ -584,13 +634,14 @@
                     expectedTotalTurns: expectedVal !== '' ? parseInt(expectedVal) : null,
                     conversationCostBudget: (function() {
                         const el = document.getElementById('sbudget_' + i);
-                        if (!el) return null;
-                        const v = el.value.trim();
-                        return v !== '' ? parseFloat(v) : null;
+                        if (!el) return s.conversationCostBudget != null ? s.conversationCostBudget : null;
+                        const v = (el.value || '').trim();
+                        if (v !== '') return parseFloat(v);
+                        return s.conversationCostBudget != null ? s.conversationCostBudget : null;
                     })(),
                     costBudgetMode: (function() {
                         const el = document.getElementById('sbudgetmode_' + i);
-                        return el ? el.value : 'OFF';
+                        return el ? el.value : (s.costBudgetMode || 'OFF');
                     })()
                 };
                 if (mode === 'tokens') {

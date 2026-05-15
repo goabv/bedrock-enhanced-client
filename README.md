@@ -251,7 +251,12 @@ Open http://localhost:8080 in your browser. You'll see columns — one per strat
 - Add/remove strategy columns
 - Choose strategy type (Sliding Window, Summarize, Cost Optimized Trimming, Cost Optimized Summarization)
 - Set parameters (Max Tokens, C, Cmax, Caching)
+- Set an optional **Cost Budget** per strategy: pick `Off`, `Warn`, or `Enforce` from the Budget Mode dropdown. Selecting Warn or Enforce reveals a Budget USD field. Each strategy is opt-in — others stay at Off.
 - Only relevant parameters are shown per strategy type
+
+**Per-strategy budget bar:** When a strategy has a budget configured, a colored progress bar appears at the top of that column showing spend vs budget and percentage used. The bar gradients green to amber to red as you approach 100% and turns solid red on `BudgetExceededException`. Strategies without a budget show no bar.
+
+**Per-strategy errors:** Each column reports its own outcome. If one strategy throws `BudgetExceededException`, the other columns still complete normally and only the failing column shows the error message.
 
 **Switch models:** Use the dropdown in the header to compare behavior across Claude Sonnet 4.5, Sonnet 4, and Haiku 4.5.
 

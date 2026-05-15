@@ -96,21 +96,24 @@ public class ChatController {
             futures.put(name, CompletableFuture.supplyAsync(() -> session.converse(message)));
         }
 
-        try {
-            Map<String, ChatResponse> responses = new LinkedHashMap<>();
-            for (Map.Entry<String, CompletableFuture<ChatResponse>> entry : futures.entrySet()) {
-                responses.put(entry.getKey(), entry.getValue().get());
+        // Collect results — capture per-strategy failures rather than failing the whole request
+        Map<String, ChatResponse> responses = new LinkedHashMap<>();
+        Map<String, String> errors = new LinkedHashMap<>();
+        for (Map.Entry<String, CompletableFuture<ChatResponse>> entry : futures.entrySet()) {
+            String name = entry.getKey();
+            try {
+                responses.put(name, entry.getValue().get());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                errors.put(name, "Interrupted");
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                errors.put(name, cause.getClass().getSimpleName() + ": " + cause.getMessage());
             }
-
-            ComparisonResponse comparison = buildComparison(sessions, responses);
-            return ResponseEntity.ok(comparison);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return ResponseEntity.internalServerError().build();
-        } catch (ExecutionException e) {
-            return ResponseEntity.internalServerError()
-                .body(ComparisonResponse.error(e.getCause().getMessage()));
         }
+
+        ComparisonResponse comparison = buildComparison(sessions, responses, errors);
+        return ResponseEntity.ok(comparison);
     }
 
     @PostMapping("/reset")
@@ -126,19 +129,44 @@ public class ChatController {
     }
 
     private ComparisonResponse buildComparison(Map<String, ChatSession> sessions,
-                                               Map<String, ChatResponse> responses) {
+                                               Map<String, ChatResponse> responses,
+                                               Map<String, String> errors) {
         ComparisonResponse resp = new ComparisonResponse();
         Map<String, StrategyResult> results = new LinkedHashMap<>();
 
         int turnCount = 0;
-        for (Map.Entry<String, ChatResponse> entry : responses.entrySet()) {
-            String name = entry.getKey();
-            ChatResponse chatResp = entry.getValue();
-            ChatSession session = sessions.get(name);
-            CostEstimate cost = session.costEstimate();
+        // Iterate over all sessions so failed strategies still get a slot in the response
+        for (Map.Entry<String, ChatSession> sessionEntry : sessions.entrySet()) {
+            String name = sessionEntry.getKey();
+            ChatSession session = sessionEntry.getValue();
 
             StrategyResult result = new StrategyResult();
             result.setName(name);
+
+            String err = errors.get(name);
+            if (err != null) {
+                result.setResponseText("⚠ " + err);
+                result.setError(err);
+                // Surface budget snapshot even on failure so the UI can show what was spent
+                BudgetStatus bs = session.budgetStatus();
+                if (bs != null) {
+                    result.setBudget(bs.budget());
+                    result.setBudgetSpent(bs.spentSoFar());
+                    result.setBudgetRemaining(bs.remaining());
+                    result.setBudgetMode(bs.mode());
+                }
+                results.put(name, result);
+                continue;
+            }
+
+            ChatResponse chatResp = responses.get(name);
+            if (chatResp == null) {
+                result.setResponseText("⚠ no response");
+                results.put(name, result);
+                continue;
+            }
+
+            CostEstimate cost = session.costEstimate();
             result.setResponseText(chatResp.text());
             result.setInputTokens(cost.inputTokens());
             result.setOutputTokens(cost.outputTokens());
@@ -244,6 +272,7 @@ public class ChatController {
         private Double budgetSpent;
         private Double budgetRemaining;
         private String budgetMode;
+        private String error;
 
         public String getName() { return name; }
         public void setName(String v) { this.name = v; }
@@ -277,6 +306,8 @@ public class ChatController {
         public void setBudgetRemaining(Double v) { this.budgetRemaining = v; }
         public String getBudgetMode() { return budgetMode; }
         public void setBudgetMode(String v) { this.budgetMode = v; }
+        public String getError() { return error; }
+        public void setError(String v) { this.error = v; }
     }
 
     public static class TurnMetrics {

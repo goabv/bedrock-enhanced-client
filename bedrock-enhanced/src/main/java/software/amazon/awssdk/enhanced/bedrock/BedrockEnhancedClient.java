@@ -214,6 +214,15 @@ public interface BedrockEnhancedClient extends SdkAutoCloseable {
         Builder costBudgetConfig(CostBudgetConfig costBudgetConfig);
 
         /**
+         * Sets the optional conversation cost budget using a builder consumer.
+         */
+        default Builder costBudgetConfig(Consumer<CostBudgetConfig.Builder> costBudgetConfig) {
+            CostBudgetConfig.Builder b = CostBudgetConfig.builder();
+            costBudgetConfig.accept(b);
+            return costBudgetConfig(b.build());
+        }
+
+        /**
          * Builds the {@link BedrockEnhancedClient}.
          *
          * @return A configured client instance.
