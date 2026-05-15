@@ -55,7 +55,7 @@ System.out.println("Cache savings: $" + cost.cacheReadSavings());
 - If only Cmax is set, Cmin defaults to Cmax (classic one-pair-at-a-time behavior).
 - If Cmin < Cmax, the window grows from Cmin to Cmax, then bulk trims back to Cmin.
 
-### Cost Optimized Strategies (Strategy C — TARGET/MAX with optional Nexpected)
+### Cost Optimized Strategies (TARGET/MAX with optional Nexpected)
 
 Cost-optimized strategies retain a configurable recent-history window and re-cache the retained window after each trim. The accumulating tail is always cached so subsequent turns benefit from cache reads.
 

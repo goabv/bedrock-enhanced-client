@@ -27,7 +27,7 @@ import software.amazon.awssdk.services.bedrockruntime.model.Message;
 import software.amazon.awssdk.utils.Logger;
 
 /**
- * Cost-optimized context window manager implementing Strategy C (TARGET/MAX with optional
+ * Cost-optimized context window manager (TARGET/MAX with optional
  * expectedTotalTurns). Supports both TOKEN_MODE (preferred) and TURN_MODE (fallback).
  *
  * <p><b>Mode selection:</b>

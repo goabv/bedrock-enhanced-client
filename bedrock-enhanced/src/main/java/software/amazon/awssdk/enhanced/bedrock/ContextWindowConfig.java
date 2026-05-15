@@ -196,8 +196,8 @@ public final class ContextWindowConfig {
     /**
      * Strategy-level break-even threshold for planning purposes (NOT used at runtime).
      *
-     * <p>Returns the {@code expectedTotalTurns} value above which Strategy C
-     * (TARGET/MAX trimming + tail caching) is cheaper than never trimming.
+     * <p>Returns the {@code expectedTotalTurns} value above which the cost-optimized
+     * trimming strategy (TARGET/MAX trimming + tail caching) is cheaper than never trimming.
      *
      * <p>Formula: {@code T + M + (2*W*T) / (R*(M-T))}
      *
