@@ -6,117 +6,34 @@
     <title>Bedrock Enhanced Client — Metrics Dashboard</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f1419;
-            color: #e7e9ea;
-            padding: 24px 32px;
-        }
-
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1419; color: #e7e9ea; padding: 24px 32px; }
         h1 { font-size: 22px; color: #f0f6fc; margin-bottom: 8px; }
         h1 span { color: #58a6ff; }
         .subtitle { font-size: 14px; color: #8b949e; margin-bottom: 24px; }
-
-        .controls {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 24px;
-            align-items: center;
-        }
-
-        button {
-            font-size: 13px;
-            padding: 8px 16px;
-            border-radius: 8px;
-            border: 1px solid #30363d;
-            background: #21262d;
-            color: #e7e9ea;
-            cursor: pointer;
-        }
+        .controls { display: flex; gap: 12px; margin-bottom: 24px; align-items: center; }
+        button { font-size: 13px; padding: 8px 16px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e7e9ea; cursor: pointer; }
         button:hover { border-color: #58a6ff; background: #292e36; }
         .btn-refresh { background: #1f6feb; border-color: #1f6feb; color: white; }
         .status { font-size: 13px; color: #8b949e; }
 
-        .charts-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 24px;
-        }
-
-        .chart-card {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 12px;
-            padding: 20px;
-        }
-
-        .chart-card h3 {
-            font-size: 15px;
-            color: #8b949e;
-            margin-bottom: 16px;
-            font-weight: 500;
-        }
-
-        .chart-card.full-width {
-            grid-column: 1 / -1;
-        }
-
-        /* SVG chart styles */
-        svg { width: 100%; height: 200px; }
-        .line-default { stroke: #6b7280; stroke-width: 2; fill: none; }
-        .line-sliding { stroke: #f97316; stroke-width: 2; fill: none; }
-        .line-costopt { stroke: #3fb950; stroke-width: 2; fill: none; }
-        .axis { stroke: #30363d; stroke-width: 1; }
+        .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+        .chart-card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; }
+        .chart-card h3 { font-size: 15px; color: #8b949e; margin-bottom: 16px; font-weight: 500; }
+        .chart-card.full-width { grid-column: 1 / -1; }
+        svg { width: 100%; height: 220px; }
         .axis-label { fill: #8b949e; font-size: 11px; }
         .grid-line { stroke: #21262d; stroke-width: 0.5; }
-        .dot { r: 3; }
-        .dot-default { fill: #6b7280; }
-        .dot-sliding { fill: #f97316; }
-        .dot-costopt { fill: #3fb950; }
 
-        .legend {
-            display: flex;
-            gap: 16px;
-            margin-bottom: 12px;
-            font-size: 12px;
-        }
+        .legend { display: flex; gap: 16px; margin-bottom: 12px; font-size: 12px; flex-wrap: wrap; }
         .legend-item { display: flex; align-items: center; gap: 6px; color: #8b949e; }
         .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
-        .legend-dot.default { background: #6b7280; }
-        .legend-dot.sliding { background: #f97316; }
-        .legend-dot.costopt { background: #3fb950; }
 
-        /* Data table */
-        .data-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-        }
-        .data-table th {
-            text-align: left;
-            padding: 8px 10px;
-            color: #8b949e;
-            border-bottom: 1px solid #30363d;
-            font-weight: 500;
-        }
-        .data-table td {
-            padding: 6px 10px;
-            border-bottom: 1px solid #21262d;
-            color: #c9d1d9;
-        }
+        .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .data-table th { text-align: left; padding: 8px 10px; color: #8b949e; border-bottom: 1px solid #30363d; font-weight: 500; }
+        .data-table td { padding: 6px 10px; border-bottom: 1px solid #21262d; color: #c9d1d9; }
         .data-table tr:hover td { background: #1c2128; }
-        .val-default { color: #9ca3af; }
-        .val-sliding { color: #fb923c; }
-        .val-costopt { color: #4ade80; font-weight: 600; }
 
-        .empty-msg {
-            text-align: center;
-            padding: 60px;
-            color: #484f58;
-            font-size: 16px;
-        }
-
+        .empty-msg { text-align: center; padding: 60px; color: #484f58; font-size: 16px; }
         a { color: #58a6ff; text-decoration: none; }
         a:hover { text-decoration: underline; }
         .nav { margin-bottom: 16px; font-size: 13px; }
@@ -140,16 +57,16 @@
     </div>
 
     <script>
+        const COLORS = ['#6b7280', '#f97316', '#3fb950', '#a78bfa', '#f43f5e', '#06b6d4'];
+
         async function loadMetrics() {
             try {
                 const resp = await fetch('/api/metrics');
                 const data = await resp.json();
-
                 if (!data || data.length === 0) {
                     document.getElementById('status').textContent = 'No data yet';
                     return;
                 }
-
                 document.getElementById('status').textContent = `${data.length} turns recorded`;
                 renderDashboard(data);
             } catch (err) {
@@ -157,89 +74,104 @@
             }
         }
 
-        function renderDashboard(data) {
-            const content = document.getElementById('content');
-            content.innerHTML = `
-                <div class="legend">
-                    <div class="legend-item"><div class="legend-dot default"></div>Default (no management)</div>
-                    <div class="legend-item"><div class="legend-dot sliding"></div>Sliding Window</div>
-                    <div class="legend-item"><div class="legend-dot costopt"></div>Cost Optimized</div>
-                </div>
+        function getStrategyNames(data) {
+            // Extract strategy names from the first turn's results map
+            if (!data.length || !data[0].results) return [];
+            return Object.keys(data[0].results);
+        }
 
+        function renderDashboard(data) {
+            const names = getStrategyNames(data);
+            const content = document.getElementById('content');
+
+            // Legend
+            let legend = '<div class="legend">';
+            names.forEach((n, i) => {
+                legend += `<div class="legend-item"><div class="legend-dot" style="background:${COLORS[i % COLORS.length]}"></div>${escapeHtml(n)}</div>`;
+            });
+            legend += '</div>';
+
+            content.innerHTML = `
+                ${legend}
                 <div class="charts-grid">
                     <div class="chart-card">
                         <h3>Cumulative Cost ($)</h3>
-                        ${renderLineChart(data, ['defaultCost', 'slidingCost', 'costOptCost'], '$')}
+                        ${renderLineChart(data, names, r => r.totalCost, '$')}
                     </div>
                     <div class="chart-card">
-                        <h3>Context Window Size (tokens)</h3>
-                        ${renderLineChart(data, ['defaultCtxWindow', 'slidingCtxWindow', 'costOptCtxWindow'], '')}
+                        <h3>Context Window Size (tokens sent per turn)</h3>
+                        ${renderLineChart(data, names, r => r.contextWindowTokens, '')}
                     </div>
                     <div class="chart-card">
                         <h3>Cumulative Input Tokens</h3>
-                        ${renderLineChart(data, ['defaultInputTokens', 'slidingInputTokens', 'costOptInputTokens'], '')}
+                        ${renderLineChart(data, names, r => r.inputTokens, '')}
                     </div>
                     <div class="chart-card">
-                        <h3>Savings vs Default (%)</h3>
-                        ${renderLineChart(data, ['slidingVsDefaultPct', 'costOptVsDefaultPct'], '%', true)}
+                        <h3>Cumulative Output Tokens</h3>
+                        ${renderLineChart(data, names, r => r.outputTokens, '')}
                     </div>
                     <div class="chart-card">
-                        <h3>Cache Read Tokens (Cost Optimized)</h3>
-                        ${renderBarChart(data, 'cacheReadTokens')}
+                        <h3>Cache Read Tokens</h3>
+                        ${renderLineChart(data, names, r => r.cacheReadTokens, '')}
                     </div>
                     <div class="chart-card">
-                        <h3>Cache Read Savings ($)</h3>
-                        ${renderBarChart(data, 'cacheReadSavings')}
+                        <h3>Savings vs ${escapeHtml(names[0] || 'baseline')} (%)</h3>
+                        ${renderSavingsChart(data, names)}
                     </div>
                 </div>
-
                 <div class="chart-card full-width" style="margin-bottom:24px;">
                     <h3>Raw Data — All Turns</h3>
-                    ${renderTable(data)}
+                    ${renderTable(data, names)}
                 </div>
             `;
         }
 
-        function renderLineChart(data, keys, unit, twoLine) {
-            const W = 500, H = 180, PAD = 40;
+        function renderLineChart(data, names, accessor, unit) {
+            const W = 500, H = 200, PAD = 40;
             const plotW = W - PAD * 2, plotH = H - PAD * 1.5;
 
             let maxVal = 0;
-            data.forEach(d => keys.forEach(k => { if (d[k] > maxVal) maxVal = d[k]; }));
+            data.forEach(d => names.forEach(n => {
+                const r = d.results[n];
+                if (r) {
+                    const v = accessor(r) || 0;
+                    if (v > maxVal) maxVal = v;
+                }
+            }));
             if (maxVal === 0) maxVal = 1;
 
-            const colors = twoLine
-                ? ['#f97316', '#3fb950']
-                : ['#6b7280', '#f97316', '#3fb950'];
-
-            let paths = keys.map((key, ki) => {
-                let points = data.map((d, i) => {
+            let paths = names.map((name, ki) => {
+                const color = COLORS[ki % COLORS.length];
+                const points = data.map((d, i) => {
+                    const r = d.results[name];
+                    const v = r ? (accessor(r) || 0) : 0;
                     const x = PAD + (i / Math.max(data.length - 1, 1)) * plotW;
-                    const y = PAD + plotH - (d[key] / maxVal) * plotH;
+                    const y = PAD + plotH - (v / maxVal) * plotH;
                     return `${x},${y}`;
                 });
-                let dots = data.map((d, i) => {
+                const dots = data.map((d, i) => {
+                    const r = d.results[name];
+                    const v = r ? (accessor(r) || 0) : 0;
                     const x = PAD + (i / Math.max(data.length - 1, 1)) * plotW;
-                    const y = PAD + plotH - (d[key] / maxVal) * plotH;
-                    return `<circle cx="${x}" cy="${y}" r="3" fill="${colors[ki]}"/>`;
+                    const y = PAD + plotH - (v / maxVal) * plotH;
+                    return `<circle cx="${x}" cy="${y}" r="3" fill="${color}"/>`;
                 }).join('');
-                return `<polyline points="${points.join(' ')}" fill="none" stroke="${colors[ki]}" stroke-width="2"/>${dots}`;
+                return `<polyline points="${points.join(' ')}" fill="none" stroke="${color}" stroke-width="2"/>${dots}`;
             }).join('');
 
-            // Y axis labels
             let yLabels = '';
             for (let i = 0; i <= 4; i++) {
                 const y = PAD + plotH - (i / 4) * plotH;
                 const val = (maxVal * i / 4);
-                const label = unit === '$' ? '$' + val.toFixed(4) : val >= 1000 ? (val/1000).toFixed(1)+'k' : val.toFixed(0);
+                const label = unit === '$' ? '$' + safeFixed(val, 4) : val >= 1000 ? safeFixed(val/1000, 1)+'k' : safeFixed(val, 0);
                 yLabels += `<text x="${PAD-4}" y="${y+4}" text-anchor="end" class="axis-label">${label}</text>`;
                 yLabels += `<line x1="${PAD}" y1="${y}" x2="${W-PAD}" y2="${y}" class="grid-line"/>`;
             }
 
-            // X axis labels
             let xLabels = '';
+            const step = Math.max(1, Math.floor(data.length / 10));
             data.forEach((d, i) => {
-                if (i % Math.max(1, Math.floor(data.length / 10)) === 0 || i === data.length - 1) {
+                if (i % step === 0 || i === data.length - 1) {
                     const x = PAD + (i / Math.max(data.length - 1, 1)) * plotW;
                     xLabels += `<text x="${x}" y="${H-4}" text-anchor="middle" class="axis-label">${d.turn}</text>`;
                 }
@@ -248,81 +180,103 @@
             return `<svg viewBox="0 0 ${W} ${H}">${yLabels}${xLabels}${paths}</svg>`;
         }
 
-        function renderBarChart(data, key) {
-            const W = 500, H = 180, PAD = 40;
+        function renderSavingsChart(data, names) {
+            if (names.length < 2) return '<div class="empty-msg">Need at least 2 strategies for savings comparison</div>';
+
+            const W = 500, H = 200, PAD = 40;
             const plotW = W - PAD * 2, plotH = H - PAD * 1.5;
+            const baseName = names[0];
 
-            let maxVal = 0;
-            data.forEach(d => { if (d[key] > maxVal) maxVal = d[key]; });
-            if (maxVal === 0) maxVal = 1;
+            // Compute savings for each non-baseline strategy
+            const savingsData = data.map(d => {
+                const baseCost = d.results[baseName] ? (d.results[baseName].totalCost || 0) : 0;
+                const out = { turn: d.turn };
+                names.slice(1).forEach(n => {
+                    const r = d.results[n];
+                    const c = r ? (r.totalCost || 0) : 0;
+                    out[n] = baseCost > 0 ? ((baseCost - c) / baseCost) * 100 : 0;
+                });
+                return out;
+            });
 
-            const barW = Math.max(4, plotW / data.length - 2);
-            let bars = data.map((d, i) => {
-                const x = PAD + (i / data.length) * plotW + 1;
-                const h = (d[key] / maxVal) * plotH;
-                const y = PAD + plotH - h;
-                return `<rect x="${x}" y="${y}" width="${barW}" height="${h}" fill="#3fb950" rx="2"/>`;
+            let maxVal = 0, minVal = 0;
+            savingsData.forEach(d => names.slice(1).forEach(n => {
+                const v = d[n];
+                if (v > maxVal) maxVal = v;
+                if (v < minVal) minVal = v;
+            }));
+            if (maxVal === 0 && minVal === 0) maxVal = 1;
+            const range = maxVal - minVal || 1;
+
+            let paths = names.slice(1).map((name, ki) => {
+                const color = COLORS[(ki + 1) % COLORS.length];
+                const points = savingsData.map((d, i) => {
+                    const v = d[name];
+                    const x = PAD + (i / Math.max(savingsData.length - 1, 1)) * plotW;
+                    const y = PAD + plotH - ((v - minVal) / range) * plotH;
+                    return `${x},${y}`;
+                });
+                const dots = savingsData.map((d, i) => {
+                    const v = d[name];
+                    const x = PAD + (i / Math.max(savingsData.length - 1, 1)) * plotW;
+                    const y = PAD + plotH - ((v - minVal) / range) * plotH;
+                    return `<circle cx="${x}" cy="${y}" r="3" fill="${color}"/>`;
+                }).join('');
+                return `<polyline points="${points.join(' ')}" fill="none" stroke="${color}" stroke-width="2"/>${dots}`;
             }).join('');
 
             let yLabels = '';
             for (let i = 0; i <= 4; i++) {
                 const y = PAD + plotH - (i / 4) * plotH;
-                const val = (maxVal * i / 4);
-                const label = key.includes('Savings') ? '$'+val.toFixed(4) : val >= 1000 ? (val/1000).toFixed(1)+'k' : val.toFixed(0);
-                yLabels += `<text x="${PAD-4}" y="${y+4}" text-anchor="end" class="axis-label">${label}</text>`;
+                const val = minVal + (range * i / 4);
+                yLabels += `<text x="${PAD-4}" y="${y+4}" text-anchor="end" class="axis-label">${safeFixed(val, 1)}%</text>`;
                 yLabels += `<line x1="${PAD}" y1="${y}" x2="${W-PAD}" y2="${y}" class="grid-line"/>`;
             }
 
+            // Zero line
+            if (minVal < 0 && maxVal > 0) {
+                const yZero = PAD + plotH - ((0 - minVal) / range) * plotH;
+                yLabels += `<line x1="${PAD}" y1="${yZero}" x2="${W-PAD}" y2="${yZero}" stroke="#484f58" stroke-width="1" stroke-dasharray="3,3"/>`;
+            }
+
             let xLabels = '';
-            data.forEach((d, i) => {
-                if (i % Math.max(1, Math.floor(data.length / 10)) === 0 || i === data.length - 1) {
-                    const x = PAD + (i / data.length) * plotW + barW / 2;
+            const step = Math.max(1, Math.floor(savingsData.length / 10));
+            savingsData.forEach((d, i) => {
+                if (i % step === 0 || i === savingsData.length - 1) {
+                    const x = PAD + (i / Math.max(savingsData.length - 1, 1)) * plotW;
                     xLabels += `<text x="${x}" y="${H-4}" text-anchor="middle" class="axis-label">${d.turn}</text>`;
                 }
             });
 
-            return `<svg viewBox="0 0 ${W} ${H}">${yLabels}${xLabels}${bars}</svg>`;
+            return `<svg viewBox="0 0 ${W} ${H}">${yLabels}${xLabels}${paths}</svg>`;
         }
 
-        function renderTable(data) {
-            let rows = data.map(d => `
-                <tr>
-                    <td>${d.turn}</td>
-                    <td class="val-default">$${d.defaultCost.toFixed(5)}</td>
-                    <td class="val-sliding">$${d.slidingCost.toFixed(5)}</td>
-                    <td class="val-costopt">$${d.costOptCost.toFixed(5)}</td>
-                    <td class="val-default">${fmtNum(d.defaultInputTokens)}</td>
-                    <td class="val-sliding">${fmtNum(d.slidingInputTokens)}</td>
-                    <td class="val-costopt">${fmtNum(d.costOptInputTokens)}</td>
-                    <td class="val-costopt">${fmtNum(d.cacheReadTokens)}</td>
-                    <td class="val-costopt">$${d.cacheReadSavings.toFixed(5)}</td>
-                    <td>${d.slidingVsDefaultPct.toFixed(1)}%</td>
-                    <td class="val-costopt">${d.costOptVsDefaultPct.toFixed(1)}%</td>
-                </tr>`).join('');
+        function renderTable(data, names) {
+            let header = '<tr><th>Turn</th>';
+            names.forEach(n => {
+                header += `<th>${escapeHtml(n)} ($)</th><th>${escapeHtml(n)} (tokens)</th>`;
+            });
+            header += '</tr>';
 
-            return `<table class="data-table">
-                <tr>
-                    <th>Turn</th>
-                    <th>Default $</th>
-                    <th>Sliding $</th>
-                    <th>CostOpt $</th>
-                    <th>Def Tokens</th>
-                    <th>Slide Tokens</th>
-                    <th>CostOpt Tokens</th>
-                    <th>Cache Reads</th>
-                    <th>Cache Savings</th>
-                    <th>Slide vs Def</th>
-                    <th>CostOpt vs Def</th>
-                </tr>
-                ${rows}
-            </table>`;
+            const rows = data.map(d => {
+                let row = `<tr><td>${d.turn}</td>`;
+                names.forEach(n => {
+                    const r = d.results ? d.results[n] : null;
+                    row += `<td>$${safeFixed(r ? r.totalCost : 0, 5)}</td>`;
+                    row += `<td>${fmtNum(r ? r.inputTokens : 0)}</td>`;
+                });
+                row += '</tr>';
+                return row;
+            }).join('');
+
+            return `<table class="data-table">${header}${rows}</table>`;
         }
 
-        function fmtNum(n) { return n.toLocaleString(); }
+        function fmtNum(n) { return (n != null ? Number(n) : 0).toLocaleString(); }
+        function safeFixed(v, d) { return (v != null && !isNaN(v) ? Number(v) : 0).toFixed(d); }
+        function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t || ''; return d.innerHTML; }
 
-        // Auto-load on page open
         loadMetrics();
-        // Auto-refresh every 3 seconds
         setInterval(loadMetrics, 3000);
     </script>
 </body>

@@ -180,17 +180,29 @@ public class SessionManager {
                     contextStrategy = ContextWindowConfig.ContextStrategy.SLIDING_WINDOW;
             }
 
-            // For cost-optimized strategies, T = targetTurns, M = maxTurns
-            // (passed as minMessages = T*2, maxMessages = M*2 to ContextWindowConfig)
-            // For sliding window, use Cmin/Cmax semantics
+            // For cost-optimized strategies: T = targetTurns (or targetRecentTokens),
+            //                                 M = maxTurns (or maxRecentTokens)
+            // Token mode is preferred when both targetRecentTokens and maxRecentTokens are set.
             if ("COST_OPTIMIZED_TRIMMING".equals(strategy) || "COST_OPTIMIZED_SUMMARIZE".equals(strategy)) {
-                int t = cfg.getTargetTurns() > 0 ? cfg.getTargetTurns() : 10;
-                int m = cfg.getMaxTurns() > t ? cfg.getMaxTurns() : (t * 2);
                 ContextWindowConfig.Builder cwBuilder = ContextWindowConfig.builder()
                     .maxTokens(Integer.MAX_VALUE)
-                    .minMessages(t * 2)
-                    .maxMessages(m * 2)
                     .contextStrategy(contextStrategy);
+
+                // Token mode (preferred) — set if both token thresholds are provided
+                if (cfg.getTargetRecentTokens() != null && cfg.getMaxRecentTokens() != null
+                    && cfg.getTargetRecentTokens() > 0 && cfg.getMaxRecentTokens() > cfg.getTargetRecentTokens()) {
+                    cwBuilder.targetRecentTokens(cfg.getTargetRecentTokens());
+                    cwBuilder.maxRecentTokens(cfg.getMaxRecentTokens());
+                    // Still need to set valid (placeholder) min/max messages for ContextWindowConfig validation
+                    cwBuilder.minMessages(2);
+                    cwBuilder.maxMessages(4);
+                } else {
+                    // Turn mode fallback
+                    int t = cfg.getTargetTurns() > 0 ? cfg.getTargetTurns() : 10;
+                    int m = cfg.getMaxTurns() > t ? cfg.getMaxTurns() : (t * 2);
+                    cwBuilder.minMessages(t * 2);
+                    cwBuilder.maxMessages(m * 2);
+                }
                 if (cfg.getExpectedTotalTurns() != null && cfg.getExpectedTotalTurns() > 0) {
                     cwBuilder.expectedTotalTurns(cfg.getExpectedTotalTurns());
                 }

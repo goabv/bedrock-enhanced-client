@@ -191,9 +191,9 @@
         ];
 
         let strategies = [
-            { name: 'Default', strategy: 'NONE', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, targetTurns: 0, maxTurns: 0, cachingEnabled: false, expectedTotalTurns: null },
-            { name: 'Sliding Window', strategy: 'SLIDING_WINDOW', maxTokens: 32768, coherenceFloor: 10, maxMessages: 10, targetTurns: 0, maxTurns: 0, cachingEnabled: false, expectedTotalTurns: null },
-            { name: 'Cost Optimized (Caching + Trimming)', strategy: 'COST_OPTIMIZED_TRIMMING', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, targetTurns: 10, maxTurns: 20, cachingEnabled: true, expectedTotalTurns: null }
+            { name: 'Default', strategy: 'NONE', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, targetTurns: 0, maxTurns: 0, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: false, expectedTotalTurns: null },
+            { name: 'Sliding Window', strategy: 'SLIDING_WINDOW', maxTokens: 32768, coherenceFloor: 10, maxMessages: 10, targetTurns: 0, maxTurns: 0, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: false, expectedTotalTurns: null },
+            { name: 'Cost Optimized (Caching + Trimming)', strategy: 'COST_OPTIMIZED_TRIMMING', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, targetTurns: 10, maxTurns: 20, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: true, expectedTotalTurns: null }
         ];
 
         let isLoading = false;
@@ -248,7 +248,9 @@
 
         function getDesc(s) {
             const cInfo = s.coherenceFloor > 0 ? (s.maxMessages > 0 && s.maxMessages !== s.coherenceFloor ? `Cmin=${s.coherenceFloor}, Cmax=${s.maxMessages}` : `C=${s.coherenceFloor}`) : '';
-            const tmInfo = `T=${s.targetTurns}, M=${s.maxTurns}` + (s.expectedTotalTurns ? `, Nexp=${s.expectedTotalTurns}` : '');
+            const tmInfo = s.mode === 'tokens'
+                ? `T=${s.targetRecentTokens || 0} tokens, M=${s.maxRecentTokens || 0} tokens` + (s.expectedTotalTurns ? `, Nexp=${s.expectedTotalTurns}` : '')
+                : `T=${s.targetTurns || 0} turns, M=${s.maxTurns || 0} turns` + (s.expectedTotalTurns ? `, Nexp=${s.expectedTotalTurns}` : '');
             switch(s.strategy) {
                 case 'NONE': return 'No context management — full history every turn';
                 case 'SLIDING_WINDOW': return `Drops oldest at ${s.maxTokens > 0 ? s.maxTokens + ' tokens or ' : ''}${cInfo} user msgs`;
@@ -378,12 +380,11 @@
                 const isSummarize = s.strategy === 'SUMMARIZE';
 
                 const showTokens = isSliding;
-                const showSlidingC = isSliding || isSummarize;  // Cmin/Cmax for sliding/summarize
-                const showCmax = isSliding;                      // separate Cmax only for sliding
-                const showCostOptT = isCostOpt;                  // T for cost-optimized
-                const showCostOptM = isCostOpt;                  // M for cost-optimized
+                const showSlidingC = isSliding || isSummarize;
+                const showCmax = isSliding;
                 const showCache = isCostOpt;
                 const showExpected = isCostOpt;
+                const isTokenMode = s.mode === 'tokens';
 
                 container.innerHTML += `
                     <div class="strategy-form" id="sform_${i}">
@@ -400,17 +401,51 @@
                             ${showTokens ? `<label>Max Tokens (0=none)<input type="number" id="stokens_${i}" value="${s.maxTokens}" min="0"></label>` : `<input type="hidden" id="stokens_${i}" value="${s.maxTokens}">`}
                             ${showSlidingC ? `<label>C (user msgs)<input type="number" id="sfloor_${i}" value="${s.coherenceFloor}" min="0"></label>` : `<input type="hidden" id="sfloor_${i}" value="${s.coherenceFloor}">`}
                             ${showCmax ? `<label>Cmax (0=C)<input type="number" id="smax_${i}" value="${s.maxMessages}" min="0"></label>` : `<input type="hidden" id="smax_${i}" value="${s.maxMessages}">`}
-                            ${showCostOptT ? `<label>T (target retained turns)<input type="number" id="starget_${i}" value="${s.targetTurns}" min="1"></label>` : `<input type="hidden" id="starget_${i}" value="${s.targetTurns}">`}
-                            ${showCostOptM ? `<label>M (max retained turns)<input type="number" id="smaxturns_${i}" value="${s.maxTurns}" min="2"></label>` : `<input type="hidden" id="smaxturns_${i}" value="${s.maxTurns}">`}
                             ${showCache ? `<label class="checkbox-label"><input type="checkbox" id="scache_${i}" ${s.cachingEnabled ? 'checked' : ''}> Caching</label>` : `<input type="hidden" id="scache_${i}" value="${s.cachingEnabled}">`}
                         </div>
-                        ${showExpected ? `
+                        ${isCostOpt ? `
+                        <div class="form-row" style="margin-top: 8px;">
+                            <label>Mode
+                                <select id="smode_${i}" onchange="onModeChange(${i})">
+                                    <option value="turns" ${s.mode === 'turns' ? 'selected' : ''}>Turns (fallback)</option>
+                                    <option value="tokens" ${s.mode === 'tokens' ? 'selected' : ''}>Tokens (preferred)</option>
+                                </select>
+                            </label>
+                            ${isTokenMode ? `
+                                <label>T (target tokens)<input type="number" id="starget_${i}" value="${s.targetRecentTokens != null ? s.targetRecentTokens : 5000}" min="100"></label>
+                                <label>M (max tokens)<input type="number" id="smaxturns_${i}" value="${s.maxRecentTokens != null ? s.maxRecentTokens : 10000}" min="200"></label>
+                            ` : `
+                                <label>T (target turns)<input type="number" id="starget_${i}" value="${s.targetTurns || 10}" min="1"></label>
+                                <label>M (max turns)<input type="number" id="smaxturns_${i}" value="${s.maxTurns || 20}" min="2"></label>
+                            `}
+                        </div>
                         <div class="form-row" style="margin-top: 8px;">
                             <label>expectedTotalTurns (optional)<input type="number" id="sexpected_${i}" value="${s.expectedTotalTurns != null ? s.expectedTotalTurns : ''}" min="0" placeholder="e.g. 200"></label>
                         </div>
-                        ` : `<input type="hidden" id="sexpected_${i}" value="">`}
+                        ` : `
+                        <input type="hidden" id="smode_${i}" value="turns">
+                        <input type="hidden" id="starget_${i}" value="${s.targetTurns || 0}">
+                        <input type="hidden" id="smaxturns_${i}" value="${s.maxTurns || 0}">
+                        <input type="hidden" id="sexpected_${i}" value="">
+                        `}
                     </div>`;
             });
+        }
+
+        function onModeChange(idx) {
+            const newMode = document.getElementById('smode_' + idx).value;
+            // Save current values before switching
+            const targetEl = document.getElementById('starget_' + idx);
+            const maxEl = document.getElementById('smaxturns_' + idx);
+            if (strategies[idx].mode === 'turns') {
+                strategies[idx].targetTurns = parseInt(targetEl.value) || 10;
+                strategies[idx].maxTurns = parseInt(maxEl.value) || 20;
+            } else {
+                strategies[idx].targetRecentTokens = parseInt(targetEl.value) || 5000;
+                strategies[idx].maxRecentTokens = parseInt(maxEl.value) || 10000;
+            }
+            strategies[idx].mode = newMode;
+            renderConfigForms();
         }
 
         function onStrategyChange(idx) {
@@ -468,7 +503,7 @@
         }
 
         function addStrategyForm() {
-            strategies.push({ name: 'New Strategy', strategy: 'SLIDING_WINDOW', maxTokens: 0, coherenceFloor: 10, maxMessages: 10, targetTurns: 0, maxTurns: 0, cachingEnabled: false, expectedTotalTurns: null });
+            strategies.push({ name: 'New Strategy', strategy: 'SLIDING_WINDOW', maxTokens: 0, coherenceFloor: 10, maxMessages: 10, targetTurns: 0, maxTurns: 0, targetRecentTokens: null, maxRecentTokens: null, mode: 'turns', cachingEnabled: false, expectedTotalTurns: null });
             renderConfigForms();
         }
 
@@ -480,22 +515,38 @@
 
         async function applyConfig() {
             // Read form values
-            strategies = strategies.map((_, i) => {
+            strategies = strategies.map((s, i) => {
                 const cacheEl = document.getElementById('scache_' + i);
                 const cachingEnabled = cacheEl.type === 'checkbox' ? cacheEl.checked : cacheEl.value === 'true';
                 const expectedEl = document.getElementById('sexpected_' + i);
                 const expectedVal = expectedEl ? expectedEl.value.trim() : '';
-                return {
+                const modeEl = document.getElementById('smode_' + i);
+                const mode = modeEl ? modeEl.value : (s.mode || 'turns');
+                const targetVal = parseInt(document.getElementById('starget_' + i).value) || 0;
+                const maxVal = parseInt(document.getElementById('smaxturns_' + i).value) || 0;
+
+                const updated = {
                     name: document.getElementById('sname_' + i).value,
                     strategy: document.getElementById('sstrat_' + i).value,
                     maxTokens: parseInt(document.getElementById('stokens_' + i).value) || 0,
                     coherenceFloor: parseInt(document.getElementById('sfloor_' + i).value) || 0,
                     maxMessages: parseInt(document.getElementById('smax_' + i).value) || 0,
-                    targetTurns: parseInt(document.getElementById('starget_' + i).value) || 0,
-                    maxTurns: parseInt(document.getElementById('smaxturns_' + i).value) || 0,
+                    targetTurns: s.targetTurns || 0,
+                    maxTurns: s.maxTurns || 0,
+                    targetRecentTokens: s.targetRecentTokens != null ? s.targetRecentTokens : null,
+                    maxRecentTokens: s.maxRecentTokens != null ? s.maxRecentTokens : null,
+                    mode: mode,
                     cachingEnabled: cachingEnabled,
                     expectedTotalTurns: expectedVal !== '' ? parseInt(expectedVal) : null
                 };
+                if (mode === 'tokens') {
+                    updated.targetRecentTokens = targetVal;
+                    updated.maxRecentTokens = maxVal;
+                } else {
+                    updated.targetTurns = targetVal;
+                    updated.maxTurns = maxVal;
+                }
+                return updated;
             });
 
             await fetch('/api/config', {

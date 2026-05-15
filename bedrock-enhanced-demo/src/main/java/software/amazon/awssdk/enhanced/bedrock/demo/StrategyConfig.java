@@ -19,18 +19,21 @@ package software.amazon.awssdk.enhanced.bedrock.demo;
  * Configuration for a single strategy slot in the demo comparison.
  *
  * <p>For sliding window: {@code coherenceFloor} = Cmin, {@code maxMessages} = Cmax.
- * <p>For cost-optimized: {@code targetTurns} = T, {@code maxTurns} = M.
+ * <p>For cost-optimized turn mode: {@code targetTurns} = T, {@code maxTurns} = M.
+ * <p>For cost-optimized token mode: {@code targetRecentTokens} = T, {@code maxRecentTokens} = M.
  */
 public class StrategyConfig {
     private String name;
-    private String strategy; // NONE, SLIDING_WINDOW, COST_OPTIMIZED_TRIMMING, COST_OPTIMIZED_SUMMARIZE, SUMMARIZE
+    private String strategy;
     private int maxTokens;             // sliding window only
-    private int coherenceFloor;        // sliding window: Cmin (user msgs)
-    private int maxMessages;           // sliding window: Cmax (user msgs)
-    private int targetTurns;           // cost-optimized: T (user msgs)
-    private int maxTurns;              // cost-optimized: M (user msgs)
+    private int coherenceFloor;        // sliding window: Cmin
+    private int maxMessages;           // sliding window: Cmax
+    private int targetTurns;           // cost-optimized turn mode: T
+    private int maxTurns;              // cost-optimized turn mode: M
+    private Integer targetRecentTokens; // cost-optimized token mode: T (preferred)
+    private Integer maxRecentTokens;    // cost-optimized token mode: M (preferred)
     private boolean cachingEnabled;
-    private Integer expectedTotalTurns; // cost-optimized: Nexpected (null = not set)
+    private Integer expectedTotalTurns;
 
     public StrategyConfig() {
     }
@@ -49,6 +52,10 @@ public class StrategyConfig {
     public void setTargetTurns(int v) { this.targetTurns = v; }
     public int getMaxTurns() { return maxTurns; }
     public void setMaxTurns(int v) { this.maxTurns = v; }
+    public Integer getTargetRecentTokens() { return targetRecentTokens; }
+    public void setTargetRecentTokens(Integer v) { this.targetRecentTokens = v; }
+    public Integer getMaxRecentTokens() { return maxRecentTokens; }
+    public void setMaxRecentTokens(Integer v) { this.maxRecentTokens = v; }
     public boolean isCachingEnabled() { return cachingEnabled; }
     public void setCachingEnabled(boolean v) { this.cachingEnabled = v; }
     public Integer getExpectedTotalTurns() { return expectedTotalTurns; }

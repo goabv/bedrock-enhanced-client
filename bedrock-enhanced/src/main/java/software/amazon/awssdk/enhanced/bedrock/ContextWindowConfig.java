@@ -62,6 +62,8 @@ public final class ContextWindowConfig {
     private final double cacheReadCostRatio;
     private final double cacheWriteCostRatio;
     private final Integer expectedTotalTurns;
+    private final Integer targetRecentTokens;
+    private final Integer maxRecentTokens;
 
     private ContextWindowConfig(Builder builder) {
         this.maxTokens = Validate.isPositive(builder.maxTokens, "maxTokens");
@@ -73,6 +75,8 @@ public final class ContextWindowConfig {
         this.cacheReadCostRatio = builder.cacheReadCostRatio;
         this.cacheWriteCostRatio = builder.cacheWriteCostRatio;
         this.expectedTotalTurns = builder.expectedTotalTurns;
+        this.targetRecentTokens = builder.targetRecentTokens;
+        this.maxRecentTokens = builder.maxRecentTokens;
 
         if (this.minMessages > this.maxMessages) {
             throw new IllegalArgumentException("minMessages (" + this.minMessages
@@ -83,6 +87,18 @@ public final class ContextWindowConfig {
         }
         if (this.cacheWriteCostRatio < 0) {
             throw new IllegalArgumentException("cacheWriteCostRatio must be >= 0");
+        }
+        // Validate token-mode thresholds if provided
+        if (this.targetRecentTokens != null && this.targetRecentTokens <= 0) {
+            throw new IllegalArgumentException("targetRecentTokens must be > 0");
+        }
+        if (this.maxRecentTokens != null && this.targetRecentTokens != null
+            && this.maxRecentTokens <= this.targetRecentTokens) {
+            throw new IllegalArgumentException("maxRecentTokens must be > targetRecentTokens");
+        }
+        if ((this.targetRecentTokens == null) != (this.maxRecentTokens == null)) {
+            throw new IllegalArgumentException(
+                "targetRecentTokens and maxRecentTokens must both be set or both be null");
         }
     }
 
@@ -158,6 +174,23 @@ public final class ContextWindowConfig {
      */
     public Integer expectedTotalTurns() {
         return expectedTotalTurns;
+    }
+
+    /**
+     * Optional token-mode TARGET threshold. When set together with {@link #maxRecentTokens()},
+     * cost-optimized strategies use token-based TARGET/MAX (preferred over turn-based).
+     * Returns {@code null} if turn mode should be used.
+     */
+    public Integer targetRecentTokens() {
+        return targetRecentTokens;
+    }
+
+    /**
+     * Optional token-mode MAX threshold. Must be > {@link #targetRecentTokens()}.
+     * Returns {@code null} if turn mode should be used.
+     */
+    public Integer maxRecentTokens() {
+        return maxRecentTokens;
     }
 
     /**
@@ -267,6 +300,8 @@ public final class ContextWindowConfig {
         private double cacheReadCostRatio = DEFAULT_CACHE_READ_RATIO;
         private double cacheWriteCostRatio = DEFAULT_CACHE_WRITE_RATIO;
         private Integer expectedTotalTurns;
+        private Integer targetRecentTokens;
+        private Integer maxRecentTokens;
 
         private Builder() {
         }
@@ -345,6 +380,25 @@ public final class ContextWindowConfig {
          */
         public Builder expectedTotalTurns(Integer expectedTotalTurns) {
             this.expectedTotalTurns = expectedTotalTurns;
+            return this;
+        }
+
+        /**
+         * Optional: sets the token-mode TARGET threshold. When set together with
+         * {@link #maxRecentTokens(Integer)}, cost-optimized strategies use token-based
+         * TARGET/MAX (preferred). If only turn thresholds are set, turn mode is used.
+         */
+        public Builder targetRecentTokens(Integer targetRecentTokens) {
+            this.targetRecentTokens = targetRecentTokens;
+            return this;
+        }
+
+        /**
+         * Optional: sets the token-mode MAX threshold. Must be greater than
+         * {@code targetRecentTokens}.
+         */
+        public Builder maxRecentTokens(Integer maxRecentTokens) {
+            this.maxRecentTokens = maxRecentTokens;
             return this;
         }
 

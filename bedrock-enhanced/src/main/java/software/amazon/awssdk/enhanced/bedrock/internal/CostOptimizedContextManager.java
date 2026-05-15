@@ -27,29 +27,28 @@ import software.amazon.awssdk.services.bedrockruntime.model.Message;
 import software.amazon.awssdk.utils.Logger;
 
 /**
- * Cost-optimized context window manager implementing Strategy C v2 (TARGET/MAX with
- * optional expectedTotalTurns).
+ * Cost-optimized context window manager implementing Strategy C (TARGET/MAX with optional
+ * expectedTotalTurns). Supports both TOKEN_MODE (preferred) and TURN_MODE (fallback).
  *
- * <p><b>Trim policy:</b>
+ * <p><b>Mode selection:</b>
  * <ul>
- *   <li>H = current retained recent-history turns</li>
- *   <li>T = targetRecentTurns (trim landing point)</li>
- *   <li>M = maxRecentTurns (hard trim trigger)</li>
- *   <li>If H >= M: must trim to T (reason: MAX_REACHED)</li>
- *   <li>If T &lt; H &lt; M and expectedTotalTurns is present: trim to T if
- *       E &gt; (W * T) / (R * (H - T)) (reason: EARLY_COST_JUSTIFIED)</li>
+ *   <li>TOKEN_MODE: when both targetRecentTokens and maxRecentTokens are provided.</li>
+ *   <li>TURN_MODE: when only targetRecentTurns and maxRecentTurns are provided.</li>
+ *   <li>If both are provided, token mode is authoritative.</li>
+ * </ul>
+ *
+ * <p><b>Trim policy (in active unit):</b>
+ * <ul>
+ *   <li>H = current retained recent-history size (in active unit)</li>
+ *   <li>T = TARGET, M = MAX</li>
+ *   <li>If H >= M: trim to T (reason: MAX_REACHED)</li>
+ *   <li>If T &lt; H &lt; M and expectedTotalTurns is present and
+ *       E &gt; (W * T) / (R * (H - T)): trim to T (reason: COST_BASED_EARLY_TRIM)</li>
  *   <li>Otherwise: do not trim</li>
  * </ul>
  *
- * <p><b>Cache policy:</b>
- * <ul>
- *   <li>Cache checkpoint placed at the end of all active messages every turn.</li>
- *   <li>The accumulating tail is always cached so subsequent turns benefit from cache reads.</li>
- *   <li>After a trim, the retained TARGET window is re-cached as the new prefix.</li>
- * </ul>
- *
- * <p><b>Strategy-level break-even (for planning, NOT runtime decisions):</b>
- * {@code expectedTotalTurns > T + M + (2*W*T) / (R*(M-T))}
+ * <p><b>Cache policy:</b> Cache checkpoint placed at end of all active messages every turn.
+ * The accumulating tail is always cached.
  */
 @SdkInternalApi
 public final class CostOptimizedContextManager {
@@ -58,15 +57,11 @@ public final class CostOptimizedContextManager {
 
     private static final int BEDROCK_MIN = 1024;
 
-    // T - retained turns after trim (trim landing point)
-    private final int targetRecentTurns;
-    // M - hard trim trigger (must trim when H >= M)
-    private final int maxRecentTurns;
-    // R - cache read cost ratio
+    private final PolicyUnit unit;
+    private final int target;            // TARGET in active unit
+    private final int max;               // MAX in active unit
     private final double cacheReadCostRatio;
-    // W - cache write cost ratio
     private final double cacheWriteCostRatio;
-    // Optional expected total turns for early-trim cost decision
     private final Integer expectedTotalTurns;
     private final ConversationSummarizer summarizer;
 
@@ -77,45 +72,62 @@ public final class CostOptimizedContextManager {
     private int activeInputTokens;
     private TrimReason lastTrimReason;
 
-    /**
-     * Creates a new cost-optimized context manager (Strategy C v2).
-     *
-     * @param targetRecentTurns    T — number of recent turns to retain after each trim. Must be > 0.
-     * @param maxRecentTurns       M — hard trim trigger. Must be > T.
-     * @param cacheReadCostRatio   R — cache read cost / normal input cost. Must be > 0.
-     * @param cacheWriteCostRatio  W — cache write cost / normal input cost. Must be >= 0.
-     * @param expectedTotalTurns   Optional expected total turns for early-trim cost evaluation.
-     *                             If null, only MAX trimming is performed.
-     * @param summarizer           Optional summarizer. If non-null, dropped turns are summarized
-     *                             into one message instead of dropped entirely.
-     */
-    public CostOptimizedContextManager(int targetRecentTurns,
-                                       int maxRecentTurns,
-                                       double cacheReadCostRatio,
-                                       double cacheWriteCostRatio,
-                                       Integer expectedTotalTurns,
-                                       ConversationSummarizer summarizer) {
-        if (targetRecentTurns <= 0) {
-            throw new IllegalArgumentException("targetRecentTurns (T) must be > 0");
+    private CostOptimizedContextManager(PolicyUnit unit, int target, int max,
+                                        double cacheReadCostRatio,
+                                        double cacheWriteCostRatio,
+                                        Integer expectedTotalTurns,
+                                        ConversationSummarizer summarizer) {
+        if (target <= 0) {
+            throw new IllegalArgumentException("TARGET must be > 0");
         }
-        if (maxRecentTurns <= targetRecentTurns) {
-            throw new IllegalArgumentException(
-                "maxRecentTurns (M=" + maxRecentTurns + ") must be > targetRecentTurns (T=" + targetRecentTurns + ")");
+        if (max <= target) {
+            throw new IllegalArgumentException("MAX (" + max + ") must be > TARGET (" + target + ")");
         }
         if (cacheReadCostRatio <= 0) {
-            throw new IllegalArgumentException("cacheReadCostRatio (R) must be > 0");
+            throw new IllegalArgumentException("cacheReadCostRatio must be > 0");
         }
         if (cacheWriteCostRatio < 0) {
-            throw new IllegalArgumentException("cacheWriteCostRatio (W) must be >= 0");
+            throw new IllegalArgumentException("cacheWriteCostRatio must be >= 0");
         }
-        this.targetRecentTurns = targetRecentTurns;
-        this.maxRecentTurns = maxRecentTurns;
+        this.unit = unit;
+        this.target = target;
+        this.max = max;
         this.cacheReadCostRatio = cacheReadCostRatio;
         this.cacheWriteCostRatio = cacheWriteCostRatio;
         this.expectedTotalTurns = expectedTotalTurns;
         this.summarizer = summarizer;
         this.history = new ArrayList<>();
         this.tokenCounts = new ArrayList<>();
+    }
+
+    /**
+     * Creates a manager in TOKEN_MODE.
+     *
+     * @param targetTokens TARGET in tokens (must be > 0).
+     * @param maxTokens    MAX in tokens (must be > targetTokens).
+     */
+    public static CostOptimizedContextManager tokenMode(int targetTokens, int maxTokens,
+                                                        double cacheReadCostRatio,
+                                                        double cacheWriteCostRatio,
+                                                        Integer expectedTotalTurns,
+                                                        ConversationSummarizer summarizer) {
+        return new CostOptimizedContextManager(PolicyUnit.TOKENS, targetTokens, maxTokens,
+            cacheReadCostRatio, cacheWriteCostRatio, expectedTotalTurns, summarizer);
+    }
+
+    /**
+     * Creates a manager in TURN_MODE.
+     *
+     * @param targetTurns TARGET in turns (must be > 0).
+     * @param maxTurns    MAX in turns (must be > targetTurns).
+     */
+    public static CostOptimizedContextManager turnMode(int targetTurns, int maxTurns,
+                                                       double cacheReadCostRatio,
+                                                       double cacheWriteCostRatio,
+                                                       Integer expectedTotalTurns,
+                                                       ConversationSummarizer summarizer) {
+        return new CostOptimizedContextManager(PolicyUnit.TURNS, targetTurns, maxTurns,
+            cacheReadCostRatio, cacheWriteCostRatio, expectedTotalTurns, summarizer);
     }
 
     /**
@@ -143,7 +155,6 @@ public final class CostOptimizedContextManager {
 
         List<Message> result = new ArrayList<>(history);
         if (!result.isEmpty() && totalHistoryTokens() >= BEDROCK_MIN) {
-            // Cache checkpoint at the end of the last message — caches everything before it
             int lastIdx = result.size() - 1;
             Message last = result.get(lastIdx);
             List<ContentBlock> newContent = new ArrayList<>(last.content());
@@ -155,53 +166,77 @@ public final class CostOptimizedContextManager {
     }
 
     /**
-     * Decides whether to trim per spec Section 6.
-     *
-     * <pre>
-     * H = current retained turns (= turnCount, which is the size of history we've kept)
-     * If H >= M:           trim — reason MAX_REACHED
-     * Elif T < H < M:
-     *   If expectedTotalTurns and E > (W * T) / (R * (H - T)):
-     *     trim — reason EARLY_COST_JUSTIFIED
-     *   Else: no trim
-     * Else (H <= T): no trim
-     * </pre>
+     * Decides whether to trim per spec. H is measured in the active unit.
      */
     private TrimReason decideTrim() {
-        int h = currentRetainedTurns();
+        int h = currentRetainedSize();
 
-        // H >= M: hard trim
-        if (h >= maxRecentTurns) {
+        if (h >= max) {
             return TrimReason.MAX_REACHED;
         }
 
-        // T < H < M: consider early trim if expectedTotalTurns is present
-        if (h > targetRecentTurns) {
+        if (h > target) {
             if (expectedTotalTurns == null) {
-                return null; // no forecast — defer to MAX trim
+                return null;
             }
             int e = Math.max(expectedTotalTurns - turnCount, 0);
             if (e == 0) {
                 return null;
             }
-            double threshold = (cacheWriteCostRatio * targetRecentTurns)
-                               / (cacheReadCostRatio * (h - targetRecentTurns));
+            double threshold = (cacheWriteCostRatio * target)
+                               / (cacheReadCostRatio * (h - target));
             if (e > threshold) {
-                return TrimReason.EARLY_COST_JUSTIFIED;
+                return TrimReason.COST_BASED_EARLY_TRIM;
             }
         }
         return null;
     }
 
-    private void performTrim(TrimReason reason) {
-        int keepMessages = targetRecentTurns * 2;
-        int startIdx = history.size() - keepMessages;
-        if (startIdx < 0) {
-            startIdx = 0;
+    /**
+     * Returns H in the active unit.
+     */
+    public int currentRetainedSize() {
+        if (unit == PolicyUnit.TOKENS) {
+            return activeInputTokens;
         }
-        if (startIdx == 0) {
-            // Nothing to trim
-            return;
+        return history.size() / 2; // turns
+    }
+
+    /**
+     * Performs the trim down to TARGET in the active unit.
+     */
+    private void performTrim(TrimReason reason) {
+        int startIdx;
+        if (unit == PolicyUnit.TOKENS) {
+            // Drop oldest pairs until total tokens <= target
+            // Walk from the end, accumulating tokens, find the cutoff index
+            int retainedTokens = 0;
+            int cutoff = history.size(); // cutoff = first kept index
+            // Iterate by pairs (user+assistant) from the end
+            for (int i = history.size() - 2; i >= 0; i -= 2) {
+                int pairTokens = tokenCounts.get(i) + tokenCounts.get(i + 1);
+                if (retainedTokens + pairTokens > target) {
+                    break;
+                }
+                retainedTokens += pairTokens;
+                cutoff = i;
+            }
+            // If we couldn't even fit one pair, keep the most recent pair anyway
+            if (cutoff == history.size() && history.size() >= 2) {
+                cutoff = history.size() - 2;
+            }
+            startIdx = cutoff;
+        } else {
+            // TURN mode: keep last `target` turns = target * 2 messages
+            int keepMessages = target * 2;
+            startIdx = history.size() - keepMessages;
+            if (startIdx < 0) {
+                startIdx = 0;
+            }
+        }
+
+        if (startIdx <= 0) {
+            return; // nothing to drop
         }
 
         if (summarizer != null) {
@@ -214,7 +249,7 @@ public final class CostOptimizedContextManager {
                 .content(ContentBlock.fromText("[Context Summary] " + summary))
                 .build();
 
-            int summaryTokens = summary.length() / 4 + 10; // approximate
+            int summaryTokens = summary.length() / 4 + 10;
 
             List<Message> newHistory = new ArrayList<>();
             List<Integer> newTokens = new ArrayList<>();
@@ -242,9 +277,10 @@ public final class CostOptimizedContextManager {
 
         log.debug(() -> "Trim fired [reason=" + reason
                         + ", trimCount=" + trimCount
+                        + ", unit=" + unit
+                        + ", T=" + target
+                        + ", M=" + max
                         + ", summarized=" + (summarizer != null)
-                        + ", T=" + targetRecentTurns
-                        + ", M=" + maxRecentTurns
                         + ", activeMessages=" + history.size()
                         + ", activeTokens=" + activeInputTokens + "]");
     }
@@ -257,68 +293,54 @@ public final class CostOptimizedContextManager {
         activeInputTokens = total;
     }
 
-    /**
-     * Returns the current retained recent-history size in turns (H).
-     * Counts user/assistant pairs in the active history.
-     */
-    public int currentRetainedTurns() {
-        return history.size() / 2;
+    /** Returns the active policy unit. */
+    public PolicyUnit unit() {
+        return unit;
     }
 
-    /** Returns the full active history as an unmodifiable list. */
+    /** Returns TARGET in the active unit. */
+    public int target() {
+        return target;
+    }
+
+    /** Returns MAX in the active unit. */
+    public int max() {
+        return max;
+    }
+
     public List<Message> history() {
         return Collections.unmodifiableList(new ArrayList<>(history));
     }
 
-    /** Returns the total token count of all messages currently in the active prompt. */
     public int totalHistoryTokens() {
         return activeInputTokens;
     }
 
-    /** Returns the number of messages in the active history. */
     public int messageCount() {
         return history.size();
     }
 
-    /** Returns the number of completed turns (cumulative, not retained). */
     public int turnCount() {
         return turnCount;
     }
 
-    /** Returns the number of trims that have occurred. */
     public int trimCount() {
         return trimCount;
     }
 
-    /** Returns the reason for the most recent trim, or null if no trim has occurred. */
     public TrimReason lastTrimReason() {
         return lastTrimReason;
     }
 
     /**
-     * Strategy-level break-even threshold for planning purposes (NOT used at runtime).
-     *
-     * <p>Returns the expectedTotalTurns above which Strategy C is cheaper than never trimming.
-     *
-     * <p>Formula: T + M + (2*W*T) / (R*(M-T))
+     * Strategy-level break-even threshold in the active unit (for planning, NOT runtime).
+     * Formula: T + M + (2*W*T) / (R*(M-T))
      */
     public double strategyBreakEvenThreshold() {
-        return targetRecentTurns + maxRecentTurns
-               + (2.0 * cacheWriteCostRatio * targetRecentTurns)
-                 / (cacheReadCostRatio * (maxRecentTurns - targetRecentTurns));
+        return target + max + (2.0 * cacheWriteCostRatio * target)
+                              / (cacheReadCostRatio * (max - target));
     }
 
-    /** Returns T (targetRecentTurns). */
-    public int targetRecentTurns() {
-        return targetRecentTurns;
-    }
-
-    /** Returns M (maxRecentTurns). */
-    public int maxRecentTurns() {
-        return maxRecentTurns;
-    }
-
-    /** Clears all state. */
     public void clear() {
         history.clear();
         tokenCounts.clear();
@@ -329,14 +351,19 @@ public final class CostOptimizedContextManager {
     }
 
     /**
-     * Reason for the most recent trim event. Useful for metrics/logging.
+     * Reason for the most recent trim event.
      */
     public enum TrimReason {
-        /** H >= M, must trim regardless of cost math. */
         MAX_REACHED,
-        /** T < H < M and cost math says early trim pays back (E > threshold). */
-        EARLY_COST_JUSTIFIED,
-        /** Trim fired manually (caller forced it). */
+        COST_BASED_EARLY_TRIM,
         FORCED
+    }
+
+    /**
+     * Active policy unit — TOKENS (preferred) or TURNS (fallback).
+     */
+    public enum PolicyUnit {
+        TOKENS,
+        TURNS
     }
 }

@@ -13,10 +13,11 @@ The Bedrock Converse API is stateless — developers must manually resend full c
 The Bedrock Enhanced Client wraps `BedrockRuntimeClient` and manages the full lifecycle of multi-turn conversations behind a model-agnostic interface. Three lines of code replace 50+ lines of manual state management.
 
 ```java
+// Token mode (preferred) — TARGET and MAX in tokens
 BedrockEnhancedClient client = BedrockEnhancedClient.builder()
     .contextWindowConfig(c -> c.contextStrategy(ContextStrategy.COST_OPTIMIZED_TRIMMING)
-                              .minMessages(20)   // T*2 = 10 user turns retained after trim
-                              .maxMessages(40)   // M*2 = 20 user turns triggers hard trim
+                              .targetRecentTokens(10000)   // T = 10K tokens retained after trim
+                              .maxRecentTokens(20000)      // M = 20K tokens triggers hard trim
                               .expectedTotalTurns(100))
     .build();
 
@@ -56,17 +57,24 @@ System.out.println("Cache savings: $" + cost.cacheReadSavings());
 
 Cost-optimized strategies retain a configurable recent-history window and re-cache the retained window after each trim. The accumulating tail is always cached so subsequent turns benefit from cache reads.
 
-**Configuration:**
-- **T (targetRecentTurns)** — trim landing point. After trimming, this many recent turns are retained.
-- **M (maxRecentTurns)** — hard trim trigger. Must be > T. When retained history H >= M, trimming fires unconditionally.
-- **R (cacheReadCostRatio)** — cache read cost / normal input cost. Defaults to 0.10.
-- **W (cacheWriteCostRatio)** — cache write cost / normal input cost. Defaults to 2.0 (1-hour TTL — Sonnet 4.5+, Opus 4.6+). Use 1.25 for 5-minute TTL.
-- **expectedTotalTurns** (optional) — expected total turns. Enables early trimming between T and M when cost-justified. If absent, only MAX trimming fires.
+**Two modes:**
 
-**Trim decision (after each completed turn):**
+- **TOKEN_MODE (preferred)** — TARGET and MAX are measured in tokens. Tokens drive cost, latency, and context-window usage directly, so this is the recommended production path.
+- **TURN_MODE (fallback)** — TARGET and MAX are measured in turns. Used when token counting isn't available or simpler tuning is preferred.
+
+When both are configured, **token mode is authoritative**.
+
+**Configuration:**
+- **Token mode:** `targetRecentTokens` (T) + `maxRecentTokens` (M)
+- **Turn mode:** `minMessages` (T*2) + `maxMessages` (M*2)
+- **R (cacheReadCostRatio)** — defaults to 0.10
+- **W (cacheWriteCostRatio)** — defaults to 2.0 (1-hour TTL — Sonnet 4.5+, Opus 4.6+). Use 1.25 for 5-minute TTL.
+- **expectedTotalTurns** (optional) — enables early trimming between T and M when cost-justified
+
+**Trim decision (after each completed turn, in active unit):**
 
 ```
-H = current retained recent-history turns (= turn count if no trim has occurred yet)
+H = current retained recent-history size
 
 If H >= M:
     trim to T (reason: MAX_REACHED)
@@ -74,19 +82,14 @@ Elif T < H < M and expectedTotalTurns is present:
     E = max(expectedTotalTurns - currentTurn, 0)
     threshold = (W * T) / (R * (H - T))
     If E > threshold:
-        trim to T (reason: EARLY_COST_JUSTIFIED)
+        trim to T (reason: COST_BASED_EARLY_TRIM)
     Else:
         no trim
 Else:
     no trim
 ```
 
-**Cache placement:** A cache checkpoint is placed at the end of the active messages every turn. This caches the entire active prompt (retained base + accumulating tail) so the model reads from cache on the next request.
-
-**Strategy-level break-even** (for planning, NOT used at runtime):
-`expectedTotalTurns > T + M + (2*W*T) / (R*(M-T))`
-
-When M = 2T, this simplifies to `expectedTotalTurns > 3T + 2W/R`.
+**Cache placement:** A cache checkpoint is placed at the end of the active messages every turn. The entire active prompt (retained base + accumulating tail) is cached.
 
 **Caching is enabled by default** when using cost-optimized strategies (user can explicitly disable).
 

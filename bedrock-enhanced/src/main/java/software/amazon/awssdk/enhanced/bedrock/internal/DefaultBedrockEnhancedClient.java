@@ -122,23 +122,34 @@ public final class DefaultBedrockEnhancedClient implements BedrockEnhancedClient
         CostOptimizedContextManager costOptimizedManager = null;
         if (sessionContextConfig.contextStrategy() == ContextWindowConfig.ContextStrategy.COST_OPTIMIZED_TRIMMING
             || sessionContextConfig.contextStrategy() == ContextWindowConfig.ContextStrategy.COST_OPTIMIZED_SUMMARIZE) {
-            // T = minMessages / 2 (target retained turns)
-            // M = maxMessages / 2 (max retained turns before hard trim)
-            int t = sessionContextConfig.minMessages() / 2;
-            int m = sessionContextConfig.maxMessages() / 2;
-            if (t < 1) {
-                t = 1;
-            }
-            if (m <= t) {
-                m = t + 1;
-            }
-            costOptimizedManager = new CostOptimizedContextManager(
-                t, m,
-                sessionContextConfig.cacheReadCostRatio(),
-                sessionContextConfig.cacheWriteCostRatio(),
-                sessionContextConfig.expectedTotalTurns(),
+
+            ConversationSummarizer costOptSummarizer =
                 sessionContextConfig.contextStrategy() == ContextWindowConfig.ContextStrategy.COST_OPTIMIZED_SUMMARIZE
-                    ? summarizer : null);
+                    ? summarizer : null;
+
+            // Token mode is preferred when both token thresholds are configured
+            if (sessionContextConfig.targetRecentTokens() != null
+                && sessionContextConfig.maxRecentTokens() != null) {
+                costOptimizedManager = CostOptimizedContextManager.tokenMode(
+                    sessionContextConfig.targetRecentTokens(),
+                    sessionContextConfig.maxRecentTokens(),
+                    sessionContextConfig.cacheReadCostRatio(),
+                    sessionContextConfig.cacheWriteCostRatio(),
+                    sessionContextConfig.expectedTotalTurns(),
+                    costOptSummarizer);
+            } else {
+                // Turn mode: T = minMessages/2, M = maxMessages/2
+                int t = sessionContextConfig.minMessages() / 2;
+                int m = sessionContextConfig.maxMessages() / 2;
+                if (t < 1) t = 1;
+                if (m <= t) m = t + 1;
+                costOptimizedManager = CostOptimizedContextManager.turnMode(
+                    t, m,
+                    sessionContextConfig.cacheReadCostRatio(),
+                    sessionContextConfig.cacheWriteCostRatio(),
+                    sessionContextConfig.expectedTotalTurns(),
+                    costOptSummarizer);
+            }
         }
 
         ContextWindowManager contextManager = new ContextWindowManager(sessionContextConfig, summarizer);
