@@ -15,7 +15,9 @@ The Bedrock Enhanced Client wraps `BedrockRuntimeClient` and manages the full li
 ```java
 BedrockEnhancedClient client = BedrockEnhancedClient.builder()
     .contextWindowConfig(c -> c.contextStrategy(ContextStrategy.COST_OPTIMIZED_TRIMMING)
-                              .maxMessages(20))
+                              .minMessages(20)   // T*2 = 10 user turns retained after trim
+                              .maxMessages(40)   // M*2 = 20 user turns triggers hard trim
+                              .expectedTotalTurns(100))
     .build();
 
 ChatSession session = client.createSession("us.anthropic.claude-sonnet-4-5-20250929-v1:0");
@@ -50,19 +52,43 @@ System.out.println("Cache savings: $" + cost.cacheReadSavings());
 - If only Cmax is set, Cmin defaults to Cmax (classic one-pair-at-a-time behavior).
 - If Cmin < Cmax, the window grows from Cmin to Cmax, then bulk trims back to Cmin.
 
-### Cost Optimized Strategies
+### Cost Optimized Strategies (Strategy C — TARGET/MAX with optional Nexpected)
 
-- Uses a threshold formula: `T = 2 × S_eff × (α − β)` to decide when to trim
-  - **S_eff** = effective cached prefix size (system prompt tokens + frozen floor tokens)
-  - **α** (alpha) = cache write cost multiplier relative to normal input. Represents the one-time cost of writing tokens to cache. Value depends on model's cache TTL:
-    - `1.25` for 5-minute TTL models (Sonnet 4, Haiku 4.5)
-    - `2.00` for 1-hour TTL models (Sonnet 4.5)
-  - **β** (beta) = cache read cost multiplier relative to normal input. Represents the per-turn savings from reading cached tokens: `0.10` (90% cheaper than uncached input)
-  - The formula balances: "how much does it cost to write to cache" vs "how much do we save per turn by reading from cache"
-- After trim, remaining messages are frozen as a cacheable prefix
-- Subsequent turns pay ~10% of normal input rate for cached prefix tokens
-- **Caching is enabled by default** when using cost-optimized strategies (user can explicitly disable)
-- C is configured via `maxMessages` (coherenceFloor = maxMessages / 2 internally)
+Cost-optimized strategies retain a configurable recent-history window and re-cache the retained window after each trim. The accumulating tail is always cached so subsequent turns benefit from cache reads.
+
+**Configuration:**
+- **T (targetRecentTurns)** — trim landing point. After trimming, this many recent turns are retained.
+- **M (maxRecentTurns)** — hard trim trigger. Must be > T. When retained history H >= M, trimming fires unconditionally.
+- **R (cacheReadCostRatio)** — cache read cost / normal input cost. Defaults to 0.10.
+- **W (cacheWriteCostRatio)** — cache write cost / normal input cost. Defaults to 2.0 (1-hour TTL — Sonnet 4.5+, Opus 4.6+). Use 1.25 for 5-minute TTL.
+- **expectedTotalTurns** (optional) — expected total turns. Enables early trimming between T and M when cost-justified. If absent, only MAX trimming fires.
+
+**Trim decision (after each completed turn):**
+
+```
+H = current retained recent-history turns (= turn count if no trim has occurred yet)
+
+If H >= M:
+    trim to T (reason: MAX_REACHED)
+Elif T < H < M and expectedTotalTurns is present:
+    E = max(expectedTotalTurns - currentTurn, 0)
+    threshold = (W * T) / (R * (H - T))
+    If E > threshold:
+        trim to T (reason: EARLY_COST_JUSTIFIED)
+    Else:
+        no trim
+Else:
+    no trim
+```
+
+**Cache placement:** A cache checkpoint is placed at the end of the active messages every turn. This caches the entire active prompt (retained base + accumulating tail) so the model reads from cache on the next request.
+
+**Strategy-level break-even** (for planning, NOT used at runtime):
+`expectedTotalTurns > T + M + (2*W*T) / (R*(M-T))`
+
+When M = 2T, this simplifies to `expectedTotalTurns > 3T + 2W/R`.
+
+**Caching is enabled by default** when using cost-optimized strategies (user can explicitly disable).
 
 ### Summarize
 

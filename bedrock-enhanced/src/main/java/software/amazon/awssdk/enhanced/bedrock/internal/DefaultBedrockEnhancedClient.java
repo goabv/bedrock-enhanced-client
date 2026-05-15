@@ -122,18 +122,21 @@ public final class DefaultBedrockEnhancedClient implements BedrockEnhancedClient
         CostOptimizedContextManager costOptimizedManager = null;
         if (sessionContextConfig.contextStrategy() == ContextWindowConfig.ContextStrategy.COST_OPTIMIZED_TRIMMING
             || sessionContextConfig.contextStrategy() == ContextWindowConfig.ContextStrategy.COST_OPTIMIZED_SUMMARIZE) {
-            int sStatic = 0;
-            if (request.systemPrompts() != null) {
-                for (software.amazon.awssdk.services.bedrockruntime.model.SystemContentBlock block : request.systemPrompts()) {
-                    if (block.text() != null) {
-                        sStatic += block.text().length() / 4 + 10;
-                    }
-                }
+            // T = minMessages / 2 (target retained turns)
+            // M = maxMessages / 2 (max retained turns before hard trim)
+            int t = sessionContextConfig.minMessages() / 2;
+            int m = sessionContextConfig.maxMessages() / 2;
+            if (t < 1) {
+                t = 1;
             }
-            boolean useOneHourTtl = request.modelId() != null
-                && request.modelId().contains("4-5");
+            if (m <= t) {
+                m = t + 1;
+            }
             costOptimizedManager = new CostOptimizedContextManager(
-                sStatic, sessionContextConfig.maxMessages() / 2, useOneHourTtl,
+                t, m,
+                sessionContextConfig.cacheReadCostRatio(),
+                sessionContextConfig.cacheWriteCostRatio(),
+                sessionContextConfig.expectedTotalTurns(),
                 sessionContextConfig.contextStrategy() == ContextWindowConfig.ContextStrategy.COST_OPTIMIZED_SUMMARIZE
                     ? summarizer : null);
         }

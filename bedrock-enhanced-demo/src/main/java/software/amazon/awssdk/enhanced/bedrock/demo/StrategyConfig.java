@@ -17,37 +17,40 @@ package software.amazon.awssdk.enhanced.bedrock.demo;
 
 /**
  * Configuration for a single strategy slot in the demo comparison.
+ *
+ * <p>For sliding window: {@code coherenceFloor} = Cmin, {@code maxMessages} = Cmax.
+ * <p>For cost-optimized: {@code targetTurns} = T, {@code maxTurns} = M.
  */
 public class StrategyConfig {
     private String name;
     private String strategy; // NONE, SLIDING_WINDOW, COST_OPTIMIZED_TRIMMING, COST_OPTIMIZED_SUMMARIZE, SUMMARIZE
-    private int maxTokens;   // 0 or Integer.MAX_VALUE = no cap
-    private int coherenceFloor; // Cmin in user messages (trim target)
-    private int maxMessages;    // Cmax in user messages (trim trigger), 0 = same as coherenceFloor
+    private int maxTokens;             // sliding window only
+    private int coherenceFloor;        // sliding window: Cmin (user msgs)
+    private int maxMessages;           // sliding window: Cmax (user msgs)
+    private int targetTurns;           // cost-optimized: T (user msgs)
+    private int maxTurns;              // cost-optimized: M (user msgs)
     private boolean cachingEnabled;
+    private Integer expectedTotalTurns; // cost-optimized: Nexpected (null = not set)
 
     public StrategyConfig() {
     }
 
-    public StrategyConfig(String name, String strategy, int maxTokens, int coherenceFloor, int maxMessages, boolean cachingEnabled) {
-        this.name = name;
-        this.strategy = strategy;
-        this.maxTokens = maxTokens;
-        this.coherenceFloor = coherenceFloor;
-        this.maxMessages = maxMessages;
-        this.cachingEnabled = cachingEnabled;
-    }
-
     public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
+    public void setName(String v) { this.name = v; }
     public String getStrategy() { return strategy; }
-    public void setStrategy(String strategy) { this.strategy = strategy; }
+    public void setStrategy(String v) { this.strategy = v; }
     public int getMaxTokens() { return maxTokens; }
-    public void setMaxTokens(int maxTokens) { this.maxTokens = maxTokens; }
+    public void setMaxTokens(int v) { this.maxTokens = v; }
     public int getCoherenceFloor() { return coherenceFloor; }
-    public void setCoherenceFloor(int coherenceFloor) { this.coherenceFloor = coherenceFloor; }
+    public void setCoherenceFloor(int v) { this.coherenceFloor = v; }
     public int getMaxMessages() { return maxMessages; }
-    public void setMaxMessages(int maxMessages) { this.maxMessages = maxMessages; }
+    public void setMaxMessages(int v) { this.maxMessages = v; }
+    public int getTargetTurns() { return targetTurns; }
+    public void setTargetTurns(int v) { this.targetTurns = v; }
+    public int getMaxTurns() { return maxTurns; }
+    public void setMaxTurns(int v) { this.maxTurns = v; }
     public boolean isCachingEnabled() { return cachingEnabled; }
-    public void setCachingEnabled(boolean cachingEnabled) { this.cachingEnabled = cachingEnabled; }
+    public void setCachingEnabled(boolean v) { this.cachingEnabled = v; }
+    public Integer getExpectedTotalTurns() { return expectedTotalTurns; }
+    public void setExpectedTotalTurns(Integer v) { this.expectedTotalTurns = v; }
 }

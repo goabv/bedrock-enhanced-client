@@ -59,11 +59,25 @@ public class SessionManager {
     }
 
     public static List<StrategyConfig> getDefaultConfigs() {
-        return Arrays.asList(
-            new StrategyConfig("Default", "NONE", 0, 0, 0, false),
-            new StrategyConfig("Sliding Window", "SLIDING_WINDOW", 32768, 10, 10, false),
-            new StrategyConfig("Cost Optimized (Caching + Trimming)", "COST_OPTIMIZED_TRIMMING", 0, 10, 10, true)
-        );
+        StrategyConfig def = new StrategyConfig();
+        def.setName("Default");
+        def.setStrategy("NONE");
+
+        StrategyConfig sliding = new StrategyConfig();
+        sliding.setName("Sliding Window");
+        sliding.setStrategy("SLIDING_WINDOW");
+        sliding.setMaxTokens(32768);
+        sliding.setCoherenceFloor(10);
+        sliding.setMaxMessages(10);
+
+        StrategyConfig costOpt = new StrategyConfig();
+        costOpt.setName("Cost Optimized (Caching + Trimming)");
+        costOpt.setStrategy("COST_OPTIMIZED_TRIMMING");
+        costOpt.setTargetTurns(10);
+        costOpt.setMaxTurns(20);
+        costOpt.setCachingEnabled(true);
+
+        return Arrays.asList(def, sliding, costOpt);
     }
 
     public synchronized void applyConfig(List<StrategyConfig> configs, String modelId) {
@@ -166,15 +180,21 @@ public class SessionManager {
                     contextStrategy = ContextWindowConfig.ContextStrategy.SLIDING_WINDOW;
             }
 
-            // For cost-optimized strategies, C is passed via maxMessages (coherenceFloor = maxMessages/2 internally)
+            // For cost-optimized strategies, T = targetTurns, M = maxTurns
+            // (passed as minMessages = T*2, maxMessages = M*2 to ContextWindowConfig)
             // For sliding window, use Cmin/Cmax semantics
             if ("COST_OPTIMIZED_TRIMMING".equals(strategy) || "COST_OPTIMIZED_SUMMARIZE".equals(strategy)) {
-                int c = cfg.getCoherenceFloor() > 0 ? cfg.getCoherenceFloor() * 2 : 20;
-                builder.contextWindowConfig(ContextWindowConfig.builder()
-                    .maxTokens(maxTokens)
-                    .maxMessages(c)
-                    .contextStrategy(contextStrategy)
-                    .build());
+                int t = cfg.getTargetTurns() > 0 ? cfg.getTargetTurns() : 10;
+                int m = cfg.getMaxTurns() > t ? cfg.getMaxTurns() : (t * 2);
+                ContextWindowConfig.Builder cwBuilder = ContextWindowConfig.builder()
+                    .maxTokens(Integer.MAX_VALUE)
+                    .minMessages(t * 2)
+                    .maxMessages(m * 2)
+                    .contextStrategy(contextStrategy);
+                if (cfg.getExpectedTotalTurns() != null && cfg.getExpectedTotalTurns() > 0) {
+                    cwBuilder.expectedTotalTurns(cfg.getExpectedTotalTurns());
+                }
+                builder.contextWindowConfig(cwBuilder.build());
             } else {
                 builder.contextWindowConfig(ContextWindowConfig.builder()
                     .maxTokens(maxTokens)

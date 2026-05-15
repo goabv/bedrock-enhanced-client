@@ -191,9 +191,9 @@
         ];
 
         let strategies = [
-            { name: 'Default', strategy: 'NONE', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, cachingEnabled: false },
-            { name: 'Sliding Window', strategy: 'SLIDING_WINDOW', maxTokens: 32768, coherenceFloor: 10, maxMessages: 10, cachingEnabled: false },
-            { name: 'Cost Optimized (Caching + Trimming)', strategy: 'COST_OPTIMIZED_TRIMMING', maxTokens: 0, coherenceFloor: 10, maxMessages: 10, cachingEnabled: true }
+            { name: 'Default', strategy: 'NONE', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, targetTurns: 0, maxTurns: 0, cachingEnabled: false, expectedTotalTurns: null },
+            { name: 'Sliding Window', strategy: 'SLIDING_WINDOW', maxTokens: 32768, coherenceFloor: 10, maxMessages: 10, targetTurns: 0, maxTurns: 0, cachingEnabled: false, expectedTotalTurns: null },
+            { name: 'Cost Optimized (Caching + Trimming)', strategy: 'COST_OPTIMIZED_TRIMMING', maxTokens: 0, coherenceFloor: 0, maxMessages: 0, targetTurns: 10, maxTurns: 20, cachingEnabled: true, expectedTotalTurns: null }
         ];
 
         let isLoading = false;
@@ -248,11 +248,12 @@
 
         function getDesc(s) {
             const cInfo = s.coherenceFloor > 0 ? (s.maxMessages > 0 && s.maxMessages !== s.coherenceFloor ? `Cmin=${s.coherenceFloor}, Cmax=${s.maxMessages}` : `C=${s.coherenceFloor}`) : '';
+            const tmInfo = `T=${s.targetTurns}, M=${s.maxTurns}` + (s.expectedTotalTurns ? `, Nexp=${s.expectedTotalTurns}` : '');
             switch(s.strategy) {
                 case 'NONE': return 'No context management — full history every turn';
                 case 'SLIDING_WINDOW': return `Drops oldest at ${s.maxTokens > 0 ? s.maxTokens + ' tokens or ' : ''}${cInfo} user msgs`;
-                case 'COST_OPTIMIZED': return `Caching + trimming, ${cInfo}`;
-                case 'COST_OPTIMIZED_SUMMARIZE': return `Caching + summarization, ${cInfo}`;
+                case 'COST_OPTIMIZED_TRIMMING': return `Caching + TARGET/MAX trimming, ${tmInfo}`;
+                case 'COST_OPTIMIZED_SUMMARIZE': return `Caching + TARGET/MAX summarization, ${tmInfo}`;
                 case 'SUMMARIZE': return `Summarizes older messages, ${cInfo}`;
                 default: return '';
             }
@@ -372,10 +373,17 @@
             const container = document.getElementById('strategyForms');
             container.innerHTML = '';
             strategies.forEach((s, i) => {
-                const showTokens = s.strategy === 'SLIDING_WINDOW';
-                const showCmin = s.strategy !== 'NONE';
-                const showCmax = s.strategy === 'SLIDING_WINDOW';
-                const showCache = s.strategy === 'COST_OPTIMIZED_TRIMMING' || s.strategy === 'COST_OPTIMIZED_SUMMARIZE';
+                const isCostOpt = s.strategy === 'COST_OPTIMIZED_TRIMMING' || s.strategy === 'COST_OPTIMIZED_SUMMARIZE';
+                const isSliding = s.strategy === 'SLIDING_WINDOW';
+                const isSummarize = s.strategy === 'SUMMARIZE';
+
+                const showTokens = isSliding;
+                const showSlidingC = isSliding || isSummarize;  // Cmin/Cmax for sliding/summarize
+                const showCmax = isSliding;                      // separate Cmax only for sliding
+                const showCostOptT = isCostOpt;                  // T for cost-optimized
+                const showCostOptM = isCostOpt;                  // M for cost-optimized
+                const showCache = isCostOpt;
+                const showExpected = isCostOpt;
 
                 container.innerHTML += `
                     <div class="strategy-form" id="sform_${i}">
@@ -390,10 +398,17 @@
                                 </select>
                             </label>
                             ${showTokens ? `<label>Max Tokens (0=none)<input type="number" id="stokens_${i}" value="${s.maxTokens}" min="0"></label>` : `<input type="hidden" id="stokens_${i}" value="${s.maxTokens}">`}
-                            ${showCmin ? `<label>C (user msgs)<input type="number" id="sfloor_${i}" value="${s.coherenceFloor}" min="0"></label>` : `<input type="hidden" id="sfloor_${i}" value="0">`}
-                            ${showCmax ? `<label>Cmax (user msgs, 0=C)<input type="number" id="smax_${i}" value="${s.maxMessages}" min="0"></label>` : `<input type="hidden" id="smax_${i}" value="${s.maxMessages}">`}
+                            ${showSlidingC ? `<label>C (user msgs)<input type="number" id="sfloor_${i}" value="${s.coherenceFloor}" min="0"></label>` : `<input type="hidden" id="sfloor_${i}" value="${s.coherenceFloor}">`}
+                            ${showCmax ? `<label>Cmax (0=C)<input type="number" id="smax_${i}" value="${s.maxMessages}" min="0"></label>` : `<input type="hidden" id="smax_${i}" value="${s.maxMessages}">`}
+                            ${showCostOptT ? `<label>T (target retained turns)<input type="number" id="starget_${i}" value="${s.targetTurns}" min="1"></label>` : `<input type="hidden" id="starget_${i}" value="${s.targetTurns}">`}
+                            ${showCostOptM ? `<label>M (max retained turns)<input type="number" id="smaxturns_${i}" value="${s.maxTurns}" min="2"></label>` : `<input type="hidden" id="smaxturns_${i}" value="${s.maxTurns}">`}
                             ${showCache ? `<label class="checkbox-label"><input type="checkbox" id="scache_${i}" ${s.cachingEnabled ? 'checked' : ''}> Caching</label>` : `<input type="hidden" id="scache_${i}" value="${s.cachingEnabled}">`}
                         </div>
+                        ${showExpected ? `
+                        <div class="form-row" style="margin-top: 8px;">
+                            <label>expectedTotalTurns (optional)<input type="number" id="sexpected_${i}" value="${s.expectedTotalTurns != null ? s.expectedTotalTurns : ''}" min="0" placeholder="e.g. 200"></label>
+                        </div>
+                        ` : `<input type="hidden" id="sexpected_${i}" value="">`}
                     </div>`;
             });
         }
@@ -406,14 +421,21 @@
                 const tokensEl = document.getElementById('stokens_' + i);
                 const floorEl = document.getElementById('sfloor_' + i);
                 const maxEl = document.getElementById('smax_' + i);
+                const targetEl = document.getElementById('starget_' + i);
+                const maxTurnsEl = document.getElementById('smaxturns_' + i);
                 const cacheEl = document.getElementById('scache_' + i);
+                const expectedEl = document.getElementById('sexpected_' + i);
+                const expectedVal = expectedEl ? expectedEl.value.trim() : '';
                 return {
                     name: nameEl ? nameEl.value : s.name,
                     strategy: stratEl ? stratEl.value : s.strategy,
                     maxTokens: tokensEl ? (parseInt(tokensEl.value) || 0) : s.maxTokens,
                     coherenceFloor: floorEl ? (parseInt(floorEl.value) || 0) : s.coherenceFloor,
                     maxMessages: maxEl ? (parseInt(maxEl.value) || 0) : s.maxMessages,
-                    cachingEnabled: cacheEl ? (cacheEl.type === 'checkbox' ? cacheEl.checked : cacheEl.value === 'true') : s.cachingEnabled
+                    targetTurns: targetEl ? (parseInt(targetEl.value) || 0) : s.targetTurns,
+                    maxTurns: maxTurnsEl ? (parseInt(maxTurnsEl.value) || 0) : s.maxTurns,
+                    cachingEnabled: cacheEl ? (cacheEl.type === 'checkbox' ? cacheEl.checked : cacheEl.value === 'true') : s.cachingEnabled,
+                    expectedTotalTurns: expectedVal !== '' ? parseInt(expectedVal) : (s.expectedTotalTurns != null ? s.expectedTotalTurns : null)
                 };
             });
 
@@ -421,11 +443,15 @@
             // Auto-set caching for cost-optimized strategies
             if (newStrat === 'COST_OPTIMIZED_TRIMMING' || newStrat === 'COST_OPTIMIZED_SUMMARIZE') {
                 strategies[idx].cachingEnabled = true;
+                if (strategies[idx].targetTurns === 0) strategies[idx].targetTurns = 10;
+                if (strategies[idx].maxTurns === 0 || strategies[idx].maxTurns <= strategies[idx].targetTurns) {
+                    strategies[idx].maxTurns = strategies[idx].targetTurns * 2;
+                }
             } else {
                 strategies[idx].cachingEnabled = false;
             }
-            // Set sensible defaults for C if not set
-            if (newStrat !== 'NONE' && strategies[idx].coherenceFloor === 0) {
+            // Set sensible defaults for sliding window C if not set
+            if ((newStrat === 'SLIDING_WINDOW' || newStrat === 'SUMMARIZE') && strategies[idx].coherenceFloor === 0) {
                 strategies[idx].coherenceFloor = 10;
                 strategies[idx].maxMessages = 10;
             }
@@ -442,7 +468,7 @@
         }
 
         function addStrategyForm() {
-            strategies.push({ name: 'New Strategy', strategy: 'SLIDING_WINDOW', maxTokens: 0, coherenceFloor: 10, maxMessages: 10, cachingEnabled: false });
+            strategies.push({ name: 'New Strategy', strategy: 'SLIDING_WINDOW', maxTokens: 0, coherenceFloor: 10, maxMessages: 10, targetTurns: 0, maxTurns: 0, cachingEnabled: false, expectedTotalTurns: null });
             renderConfigForms();
         }
 
@@ -457,13 +483,18 @@
             strategies = strategies.map((_, i) => {
                 const cacheEl = document.getElementById('scache_' + i);
                 const cachingEnabled = cacheEl.type === 'checkbox' ? cacheEl.checked : cacheEl.value === 'true';
+                const expectedEl = document.getElementById('sexpected_' + i);
+                const expectedVal = expectedEl ? expectedEl.value.trim() : '';
                 return {
                     name: document.getElementById('sname_' + i).value,
                     strategy: document.getElementById('sstrat_' + i).value,
                     maxTokens: parseInt(document.getElementById('stokens_' + i).value) || 0,
                     coherenceFloor: parseInt(document.getElementById('sfloor_' + i).value) || 0,
                     maxMessages: parseInt(document.getElementById('smax_' + i).value) || 0,
-                    cachingEnabled: cachingEnabled
+                    targetTurns: parseInt(document.getElementById('starget_' + i).value) || 0,
+                    maxTurns: parseInt(document.getElementById('smaxturns_' + i).value) || 0,
+                    cachingEnabled: cachingEnabled,
+                    expectedTotalTurns: expectedVal !== '' ? parseInt(expectedVal) : null
                 };
             });
 

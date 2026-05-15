@@ -17,9 +17,7 @@ package software.amazon.awssdk.enhanced.bedrock.internal;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import software.amazon.awssdk.annotations.SdkInternalApi;
 import software.amazon.awssdk.services.bedrockruntime.model.CachePointBlock;
 import software.amazon.awssdk.services.bedrockruntime.model.CachePointType;
@@ -29,72 +27,99 @@ import software.amazon.awssdk.services.bedrockruntime.model.Message;
 import software.amazon.awssdk.utils.Logger;
 
 /**
- * Cost-optimized context window manager that coordinates trimming with prompt caching.
+ * Cost-optimized context window manager implementing Strategy C v2 (TARGET/MAX with
+ * optional expectedTotalTurns).
  *
- * <p>Uses a threshold-based trim strategy derived from cache pricing to minimize
- * average input token cost per turn. Trims in bulk (down to C turns) and freezes
- * the remaining turns as a cacheable prefix ("frozen floor").
- *
- * <p>Key formula: T = 2 * S_eff * (alpha - beta), where:
+ * <p><b>Trim policy:</b>
  * <ul>
- *   <li>S_eff = S_static + F (effective cached prefix size)</li>
- *   <li>alpha = cache write multiplier (1.25 for 5min TTL, 2.0 for 1hr TTL)</li>
- *   <li>beta = cache read multiplier (0.10)</li>
+ *   <li>H = current retained recent-history turns</li>
+ *   <li>T = targetRecentTurns (trim landing point)</li>
+ *   <li>M = maxRecentTurns (hard trim trigger)</li>
+ *   <li>If H >= M: must trim to T (reason: MAX_REACHED)</li>
+ *   <li>If T &lt; H &lt; M and expectedTotalTurns is present: trim to T if
+ *       E &gt; (W * T) / (R * (H - T)) (reason: EARLY_COST_JUSTIFIED)</li>
+ *   <li>Otherwise: do not trim</li>
  * </ul>
  *
- * <p>Trimming fires when accumulated (uncached) tokens exceed T AND history
- * has more than C turns.
+ * <p><b>Cache policy:</b>
+ * <ul>
+ *   <li>Cache checkpoint placed at the end of all active messages every turn.</li>
+ *   <li>The accumulating tail is always cached so subsequent turns benefit from cache reads.</li>
+ *   <li>After a trim, the retained TARGET window is re-cached as the new prefix.</li>
+ * </ul>
+ *
+ * <p><b>Strategy-level break-even (for planning, NOT runtime decisions):</b>
+ * {@code expectedTotalTurns > T + M + (2*W*T) / (R*(M-T))}
  */
 @SdkInternalApi
 public final class CostOptimizedContextManager {
 
     private static final Logger log = Logger.loggerFor(CostOptimizedContextManager.class);
 
-    private static final double ALPHA_5MIN = 1.25;
-    private static final double ALPHA_1HOUR = 2.00;
-    private static final double BETA = 0.10;
     private static final int BEDROCK_MIN = 1024;
 
-    private final int sStatic;
-    private final int coherenceFloor;
-    private final double alpha;
+    // T - retained turns after trim (trim landing point)
+    private final int targetRecentTurns;
+    // M - hard trim trigger (must trim when H >= M)
+    private final int maxRecentTurns;
+    // R - cache read cost ratio
+    private final double cacheReadCostRatio;
+    // W - cache write cost ratio
+    private final double cacheWriteCostRatio;
+    // Optional expected total turns for early-trim cost decision
+    private final Integer expectedTotalTurns;
     private final ConversationSummarizer summarizer;
 
     private final List<Message> history;
     private final List<Integer> tokenCounts;
-    private List<Message> frozenFloor;
-    private Set<Integer> frozenFloorIndices;
-    private int frozenTokenCount;
-    private int sEff;
-    private int trimThreshold;
+    private int turnCount;
     private int trimCount;
+    private int activeInputTokens;
+    private TrimReason lastTrimReason;
 
     /**
-     * Creates a new cost-optimized context manager.
+     * Creates a new cost-optimized context manager (Strategy C v2).
      *
-     * @param sStatic Token count of static prefix (system prompt). 0 if none.
-     * @param coherenceFloor Minimum turns retained after trim (C).
-     * @param useOneHourTtl Whether to use 1-hour TTL pricing (only for Claude 4.5 models).
-     * @param summarizer Optional summarizer. If non-null, trim uses summarization instead of dropping.
+     * @param targetRecentTurns    T — number of recent turns to retain after each trim. Must be > 0.
+     * @param maxRecentTurns       M — hard trim trigger. Must be > T.
+     * @param cacheReadCostRatio   R — cache read cost / normal input cost. Must be > 0.
+     * @param cacheWriteCostRatio  W — cache write cost / normal input cost. Must be >= 0.
+     * @param expectedTotalTurns   Optional expected total turns for early-trim cost evaluation.
+     *                             If null, only MAX trimming is performed.
+     * @param summarizer           Optional summarizer. If non-null, dropped turns are summarized
+     *                             into one message instead of dropped entirely.
      */
-    public CostOptimizedContextManager(int sStatic, int coherenceFloor, boolean useOneHourTtl,
+    public CostOptimizedContextManager(int targetRecentTurns,
+                                       int maxRecentTurns,
+                                       double cacheReadCostRatio,
+                                       double cacheWriteCostRatio,
+                                       Integer expectedTotalTurns,
                                        ConversationSummarizer summarizer) {
-        this.sStatic = sStatic;
-        this.coherenceFloor = coherenceFloor;
-        this.alpha = useOneHourTtl ? ALPHA_1HOUR : ALPHA_5MIN;
+        if (targetRecentTurns <= 0) {
+            throw new IllegalArgumentException("targetRecentTurns (T) must be > 0");
+        }
+        if (maxRecentTurns <= targetRecentTurns) {
+            throw new IllegalArgumentException(
+                "maxRecentTurns (M=" + maxRecentTurns + ") must be > targetRecentTurns (T=" + targetRecentTurns + ")");
+        }
+        if (cacheReadCostRatio <= 0) {
+            throw new IllegalArgumentException("cacheReadCostRatio (R) must be > 0");
+        }
+        if (cacheWriteCostRatio < 0) {
+            throw new IllegalArgumentException("cacheWriteCostRatio (W) must be >= 0");
+        }
+        this.targetRecentTurns = targetRecentTurns;
+        this.maxRecentTurns = maxRecentTurns;
+        this.cacheReadCostRatio = cacheReadCostRatio;
+        this.cacheWriteCostRatio = cacheWriteCostRatio;
+        this.expectedTotalTurns = expectedTotalTurns;
         this.summarizer = summarizer;
         this.history = new ArrayList<>();
         this.tokenCounts = new ArrayList<>();
-        this.frozenFloor = new ArrayList<>();
-        this.frozenFloorIndices = new HashSet<>();
-        this.frozenTokenCount = 0;
-        this.sEff = sStatic;
-        this.trimThreshold = computeThreshold(sStatic);
-        this.trimCount = 0;
     }
 
     /**
-     * Adds a user+assistant turn to history with exact token counts.
+     * Adds a completed turn (user + assistant) with token counts to history.
      */
     public void addTurn(Message userMessage, int userTokens,
                         Message assistantMessage, int assistantTokens) {
@@ -102,240 +127,216 @@ public final class CostOptimizedContextManager {
         tokenCounts.add(userTokens);
         history.add(assistantMessage);
         tokenCounts.add(assistantTokens);
+        turnCount++;
+        recomputeActiveInputTokens();
     }
 
     /**
-     * Returns whether a trim should fire based on accumulated tokens exceeding
-     * the threshold AND having more than C turns (2*C messages) in history.
+     * Builds the message list for the next request. Applies trim if due, then places
+     * a cache checkpoint at the end of all active messages.
      */
-    public boolean shouldTrim() {
-        if (history.size() <= coherenceFloor * 2) {
-            return false;
+    public List<Message> buildMessages() {
+        TrimReason reason = decideTrim();
+        if (reason != null) {
+            performTrim(reason);
         }
-        return accumulatedTokens() > trimThreshold;
-    }
 
-    /**
-     * Returns whether the cache marker should be applied.
-     * Before first trim: cache if total history tokens >= BEDROCK_MIN.
-     * After first trim: cache if S_eff >= BEDROCK_MIN.
-     */
-    public boolean shouldCache() {
-        if (frozenFloor.isEmpty()) {
-            // Before first trim: cache the whole history as provisional prefix
-            return totalHistoryTokens() >= BEDROCK_MIN;
+        List<Message> result = new ArrayList<>(history);
+        if (!result.isEmpty() && totalHistoryTokens() >= BEDROCK_MIN) {
+            // Cache checkpoint at the end of the last message — caches everything before it
+            int lastIdx = result.size() - 1;
+            Message last = result.get(lastIdx);
+            List<ContentBlock> newContent = new ArrayList<>(last.content());
+            newContent.add(ContentBlock.fromCachePoint(
+                CachePointBlock.builder().type(CachePointType.DEFAULT).build()));
+            result.set(lastIdx, last.toBuilder().content(newContent).build());
         }
-        return sEff >= BEDROCK_MIN;
+        return result;
     }
 
     /**
-     * Trims history. If a summarizer is configured, summarizes older messages into one
-     * and keeps the last C turns after it. Otherwise, drops older messages and keeps last C turns.
+     * Decides whether to trim per spec Section 6.
+     *
+     * <pre>
+     * H = current retained turns (= turnCount, which is the size of history we've kept)
+     * If H >= M:           trim — reason MAX_REACHED
+     * Elif T < H < M:
+     *   If expectedTotalTurns and E > (W * T) / (R * (H - T)):
+     *     trim — reason EARLY_COST_JUSTIFIED
+     *   Else: no trim
+     * Else (H <= T): no trim
+     * </pre>
      */
-    public void trim() {
-        int keepMessages = coherenceFloor * 2;
+    private TrimReason decideTrim() {
+        int h = currentRetainedTurns();
+
+        // H >= M: hard trim
+        if (h >= maxRecentTurns) {
+            return TrimReason.MAX_REACHED;
+        }
+
+        // T < H < M: consider early trim if expectedTotalTurns is present
+        if (h > targetRecentTurns) {
+            if (expectedTotalTurns == null) {
+                return null; // no forecast — defer to MAX trim
+            }
+            int e = Math.max(expectedTotalTurns - turnCount, 0);
+            if (e == 0) {
+                return null;
+            }
+            double threshold = (cacheWriteCostRatio * targetRecentTurns)
+                               / (cacheReadCostRatio * (h - targetRecentTurns));
+            if (e > threshold) {
+                return TrimReason.EARLY_COST_JUSTIFIED;
+            }
+        }
+        return null;
+    }
+
+    private void performTrim(TrimReason reason) {
+        int keepMessages = targetRecentTurns * 2;
         int startIdx = history.size() - keepMessages;
         if (startIdx < 0) {
             startIdx = 0;
         }
+        if (startIdx == 0) {
+            // Nothing to trim
+            return;
+        }
 
-        List<Message> recentHistory;
-        List<Integer> recentTokens;
-
-        if (summarizer != null && startIdx > 0) {
-            // Summarize the older messages
+        if (summarizer != null) {
+            // Summarize the older messages into one summary message
             List<Message> olderMessages = new ArrayList<>(history.subList(0, startIdx));
             String summary = summarizer.summarize(olderMessages);
 
-            // Build new history: [summary_as_assistant_msg] + recent messages
             Message summaryMsg = Message.builder()
                 .role(ConversationRole.ASSISTANT)
                 .content(ContentBlock.fromText("[Context Summary] " + summary))
                 .build();
 
-            recentHistory = new ArrayList<>();
-            recentHistory.add(summaryMsg);
-            recentHistory.addAll(history.subList(startIdx, history.size()));
+            int summaryTokens = summary.length() / 4 + 10; // approximate
 
-            // Estimate summary token count (~1 token per 4 chars)
-            int summaryTokens = summary.length() / 4 + 10;
-            recentTokens = new ArrayList<>();
-            recentTokens.add(summaryTokens);
-            recentTokens.addAll(tokenCounts.subList(startIdx, tokenCounts.size()));
+            List<Message> newHistory = new ArrayList<>();
+            List<Integer> newTokens = new ArrayList<>();
+            newHistory.add(summaryMsg);
+            newTokens.add(summaryTokens);
+            newHistory.addAll(history.subList(startIdx, history.size()));
+            newTokens.addAll(tokenCounts.subList(startIdx, tokenCounts.size()));
+
+            history.clear();
+            history.addAll(newHistory);
+            tokenCounts.clear();
+            tokenCounts.addAll(newTokens);
         } else {
-            recentHistory = new ArrayList<>(history.subList(startIdx, history.size()));
-            recentTokens = new ArrayList<>(tokenCounts.subList(startIdx, tokenCounts.size()));
+            List<Message> kept = new ArrayList<>(history.subList(startIdx, history.size()));
+            List<Integer> keptTokens = new ArrayList<>(tokenCounts.subList(startIdx, tokenCounts.size()));
+            history.clear();
+            history.addAll(kept);
+            tokenCounts.clear();
+            tokenCounts.addAll(keptTokens);
         }
 
-        history.clear();
-        history.addAll(recentHistory);
-        tokenCounts.clear();
-        tokenCounts.addAll(recentTokens);
-
-        // Freeze the entire remaining history as the new floor
-        frozenFloor = new ArrayList<>(history);
-        frozenFloorIndices = new HashSet<>();
-        frozenTokenCount = 0;
-        for (int i = 0; i < history.size(); i++) {
-            frozenFloorIndices.add(i);
-            frozenTokenCount += tokenCounts.get(i);
-        }
-
-        sEff = sStatic + frozenTokenCount;
-        trimThreshold = computeThreshold(sEff);
         trimCount++;
+        lastTrimReason = reason;
+        recomputeActiveInputTokens();
 
-        log.debug(() -> "Trim fired [trimCount=" + trimCount
+        log.debug(() -> "Trim fired [reason=" + reason
+                        + ", trimCount=" + trimCount
                         + ", summarized=" + (summarizer != null)
-                        + ", historySize=" + history.size()
-                        + ", F=" + frozenTokenCount
-                        + ", S_eff=" + sEff
-                        + ", T=" + trimThreshold + "]");
+                        + ", T=" + targetRecentTurns
+                        + ", M=" + maxRecentTurns
+                        + ", activeMessages=" + history.size()
+                        + ", activeTokens=" + activeInputTokens + "]");
     }
 
-    /**
-     * Builds the message list for a Bedrock request, injecting cache markers
-     * on frozen floor messages when caching is active. Before first trim,
-     * places checkpoint on the last assistant message (provisional caching).
-     */
-    public List<Message> buildMessages() {
-        if (shouldTrim()) {
-            trim();
-        }
-
-        boolean useCache = shouldCache();
-        List<Message> messages = new ArrayList<>();
-
-        if (frozenFloor.isEmpty() && useCache) {
-            // Before first trim: place checkpoint on last assistant message
-            int lastAssistantIdx = -1;
-            for (int i = history.size() - 1; i >= 0; i--) {
-                if (ConversationRole.ASSISTANT.equals(history.get(i).role())) {
-                    lastAssistantIdx = i;
-                    break;
-                }
-            }
-            for (int i = 0; i < history.size(); i++) {
-                Message msg = history.get(i);
-                if (i == lastAssistantIdx) {
-                    List<ContentBlock> newContent = new ArrayList<>(msg.content());
-                    newContent.add(ContentBlock.fromCachePoint(
-                        CachePointBlock.builder().type(CachePointType.DEFAULT).build()));
-                    messages.add(msg.toBuilder().content(newContent).build());
-                } else {
-                    messages.add(msg);
-                }
-            }
-        } else {
-            for (int i = 0; i < history.size(); i++) {
-                Message msg = history.get(i);
-                boolean isFrozen = frozenFloorIndices.contains(i);
-
-                if (isFrozen && useCache && i == lastFrozenIndex()) {
-                    List<ContentBlock> newContent = new ArrayList<>(msg.content());
-                    newContent.add(ContentBlock.fromCachePoint(
-                        CachePointBlock.builder().type(CachePointType.DEFAULT).build()));
-                    messages.add(msg.toBuilder().content(newContent).build());
-                } else {
-                    messages.add(msg);
-                }
-            }
-        }
-
-        return messages;
-    }
-
-    /**
-     * Returns the full history as an unmodifiable list.
-     */
-    public List<Message> history() {
-        return Collections.unmodifiableList(new ArrayList<>(history));
-    }
-
-    /**
-     * Returns the current accumulated (uncached) token count.
-     */
-    public int accumulatedTokens() {
-        int total = 0;
-        for (int i = 0; i < tokenCounts.size(); i++) {
-            if (!frozenFloorIndices.contains(i)) {
-                total += tokenCounts.get(i);
-            }
-        }
-        return total;
-    }
-
-    /**
-     * Returns the frozen floor token count (F).
-     */
-    public int frozenTokenCount() {
-        return frozenTokenCount;
-    }
-
-    /**
-     * Returns the effective cached prefix size (S_eff = S_static + F).
-     */
-    public int effectiveCachedSize() {
-        return sEff;
-    }
-
-    /**
-     * Returns the current trim threshold (T).
-     */
-    public int trimThreshold() {
-        return trimThreshold;
-    }
-
-    /**
-     * Returns the total token count of all messages in history.
-     */
-    public int totalHistoryTokens() {
+    private void recomputeActiveInputTokens() {
         int total = 0;
         for (int tc : tokenCounts) {
             total += tc;
         }
-        return total;
+        activeInputTokens = total;
     }
 
     /**
-     * Returns the number of messages in history.
+     * Returns the current retained recent-history size in turns (H).
+     * Counts user/assistant pairs in the active history.
      */
+    public int currentRetainedTurns() {
+        return history.size() / 2;
+    }
+
+    /** Returns the full active history as an unmodifiable list. */
+    public List<Message> history() {
+        return Collections.unmodifiableList(new ArrayList<>(history));
+    }
+
+    /** Returns the total token count of all messages currently in the active prompt. */
+    public int totalHistoryTokens() {
+        return activeInputTokens;
+    }
+
+    /** Returns the number of messages in the active history. */
     public int messageCount() {
         return history.size();
     }
 
-    /**
-     * Returns the number of trims that have occurred.
-     */
+    /** Returns the number of completed turns (cumulative, not retained). */
+    public int turnCount() {
+        return turnCount;
+    }
+
+    /** Returns the number of trims that have occurred. */
     public int trimCount() {
         return trimCount;
     }
 
+    /** Returns the reason for the most recent trim, or null if no trim has occurred. */
+    public TrimReason lastTrimReason() {
+        return lastTrimReason;
+    }
+
     /**
-     * Clears all state.
+     * Strategy-level break-even threshold for planning purposes (NOT used at runtime).
+     *
+     * <p>Returns the expectedTotalTurns above which Strategy C is cheaper than never trimming.
+     *
+     * <p>Formula: T + M + (2*W*T) / (R*(M-T))
      */
+    public double strategyBreakEvenThreshold() {
+        return targetRecentTurns + maxRecentTurns
+               + (2.0 * cacheWriteCostRatio * targetRecentTurns)
+                 / (cacheReadCostRatio * (maxRecentTurns - targetRecentTurns));
+    }
+
+    /** Returns T (targetRecentTurns). */
+    public int targetRecentTurns() {
+        return targetRecentTurns;
+    }
+
+    /** Returns M (maxRecentTurns). */
+    public int maxRecentTurns() {
+        return maxRecentTurns;
+    }
+
+    /** Clears all state. */
     public void clear() {
         history.clear();
         tokenCounts.clear();
-        frozenFloor.clear();
-        frozenFloorIndices.clear();
-        frozenTokenCount = 0;
-        sEff = sStatic;
-        trimThreshold = computeThreshold(sStatic);
+        turnCount = 0;
         trimCount = 0;
+        activeInputTokens = 0;
+        lastTrimReason = null;
     }
 
-    private int computeThreshold(int effectiveSize) {
-        return (int) (2.0 * effectiveSize * (alpha - BETA));
-    }
-
-    private int lastFrozenIndex() {
-        int last = -1;
-        for (int idx : frozenFloorIndices) {
-            if (idx > last) {
-                last = idx;
-            }
-        }
-        return last;
+    /**
+     * Reason for the most recent trim event. Useful for metrics/logging.
+     */
+    public enum TrimReason {
+        /** H >= M, must trim regardless of cost math. */
+        MAX_REACHED,
+        /** T < H < M and cost math says early trim pays back (E > threshold). */
+        EARLY_COST_JUSTIFIED,
+        /** Trim fired manually (caller forced it). */
+        FORCED
     }
 }

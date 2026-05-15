@@ -49,12 +49,19 @@ public final class ContextWindowConfig {
     private static final ContextStrategy DEFAULT_CONTEXT_STRATEGY = ContextStrategy.SLIDING_WINDOW;
     private static final OverflowPolicy DEFAULT_OVERFLOW_POLICY = OverflowPolicy.TRIM;
 
+    // Defaults for cost-optimized strategies (1-hour TTL — used by Sonnet 4.5+, Opus 4.6+)
+    private static final double DEFAULT_CACHE_READ_RATIO = 0.10;
+    private static final double DEFAULT_CACHE_WRITE_RATIO = 2.0;
+
     private final int maxTokens;
     private final int maxMessages;
     private final int minMessages;
     private final ContextStrategy contextStrategy;
     private final OverflowPolicy overflowPolicy;
     private final Duration maxAge;
+    private final double cacheReadCostRatio;
+    private final double cacheWriteCostRatio;
+    private final Integer expectedTotalTurns;
 
     private ContextWindowConfig(Builder builder) {
         this.maxTokens = Validate.isPositive(builder.maxTokens, "maxTokens");
@@ -63,10 +70,19 @@ public final class ContextWindowConfig {
         this.contextStrategy = Validate.paramNotNull(builder.contextStrategy, "contextStrategy");
         this.overflowPolicy = Validate.paramNotNull(builder.overflowPolicy, "overflowPolicy");
         this.maxAge = builder.maxAge;
+        this.cacheReadCostRatio = builder.cacheReadCostRatio;
+        this.cacheWriteCostRatio = builder.cacheWriteCostRatio;
+        this.expectedTotalTurns = builder.expectedTotalTurns;
 
         if (this.minMessages > this.maxMessages) {
             throw new IllegalArgumentException("minMessages (" + this.minMessages
                 + ") must not exceed maxMessages (" + this.maxMessages + ")");
+        }
+        if (this.cacheReadCostRatio <= 0) {
+            throw new IllegalArgumentException("cacheReadCostRatio must be > 0");
+        }
+        if (this.cacheWriteCostRatio < 0) {
+            throw new IllegalArgumentException("cacheWriteCostRatio must be >= 0");
         }
     }
 
@@ -115,6 +131,51 @@ public final class ContextWindowConfig {
      */
     public Duration maxAge() {
         return maxAge;
+    }
+
+    /**
+     * Cache read cost ratio (R) — cost of cached input tokens divided by normal input cost.
+     * Used by cost-optimized strategies to compute the break-even point.
+     * Defaults to 0.10 (10% of input cost) if not set.
+     */
+    public double cacheReadCostRatio() {
+        return cacheReadCostRatio;
+    }
+
+    /**
+     * Cache write cost ratio (W) — cost of writing tokens to cache divided by normal input cost.
+     * Used by cost-optimized strategies to compute the break-even point.
+     * Defaults to 2.0 (1-hour TTL — Sonnet 4.5+, Opus 4.6+). Use 1.25 for 5-minute TTL.
+     */
+    public double cacheWriteCostRatio() {
+        return cacheWriteCostRatio;
+    }
+
+    /**
+     * Optional expected total turns for the conversation. When set, cost-optimized
+     * strategies use this to decide whether to trim early between TARGET (T=minMessages/2)
+     * and MAX (M=maxMessages/2). Returns {@code null} if not configured.
+     */
+    public Integer expectedTotalTurns() {
+        return expectedTotalTurns;
+    }
+
+    /**
+     * Strategy-level break-even threshold for planning purposes (NOT used at runtime).
+     *
+     * <p>Returns the {@code expectedTotalTurns} value above which Strategy C
+     * (TARGET/MAX trimming + tail caching) is cheaper than never trimming.
+     *
+     * <p>Formula: {@code T + M + (2*W*T) / (R*(M-T))}
+     *
+     * <p>Where T = {@code minMessages/2}, M = {@code maxMessages/2}.
+     */
+    public double costOptimizedBreakEvenThreshold() {
+        int t = minMessages / 2;
+        int m = maxMessages / 2;
+        if (t < 1) t = 1;
+        if (m <= t) m = t + 1;
+        return t + m + (2.0 * cacheWriteCostRatio * t) / (cacheReadCostRatio * (m - t));
     }
 
     public static Builder builder() {
@@ -184,7 +245,7 @@ public final class ContextWindowConfig {
      */
     public enum OverflowPolicy {
         /**
-         * Automatically reduce context using the configured {@link TrimStrategy}.
+         * Automatically reduce context using the configured {@link ContextStrategy}.
          * This is the default.
          */
         TRIM,
@@ -203,6 +264,9 @@ public final class ContextWindowConfig {
         private ContextStrategy contextStrategy = DEFAULT_CONTEXT_STRATEGY;
         private OverflowPolicy overflowPolicy = DEFAULT_OVERFLOW_POLICY;
         private Duration maxAge;
+        private double cacheReadCostRatio = DEFAULT_CACHE_READ_RATIO;
+        private double cacheWriteCostRatio = DEFAULT_CACHE_WRITE_RATIO;
+        private Integer expectedTotalTurns;
 
         private Builder() {
         }
@@ -252,6 +316,35 @@ public final class ContextWindowConfig {
          */
         public Builder maxAge(Duration maxAge) {
             this.maxAge = maxAge;
+            return this;
+        }
+
+        /**
+         * Sets the cache read cost ratio (R) — cost of cached input tokens divided by
+         * normal input cost. Used by cost-optimized strategies. Defaults to 0.10.
+         */
+        public Builder cacheReadCostRatio(double cacheReadCostRatio) {
+            this.cacheReadCostRatio = cacheReadCostRatio;
+            return this;
+        }
+
+        /**
+         * Sets the cache write cost ratio (W) — cost of writing tokens to cache divided
+         * by normal input cost. Used by cost-optimized strategies.
+         * Defaults to 2.0 (1-hour TTL — Sonnet 4.5+, Opus 4.6+). Use 1.25 for 5-minute TTL.
+         */
+        public Builder cacheWriteCostRatio(double cacheWriteCostRatio) {
+            this.cacheWriteCostRatio = cacheWriteCostRatio;
+            return this;
+        }
+
+        /**
+         * Optional: sets the expected total turns for the conversation. Cost-optimized
+         * strategies use this to decide whether to trim early between TARGET and MAX.
+         * If absent, only MAX-trimming is performed.
+         */
+        public Builder expectedTotalTurns(Integer expectedTotalTurns) {
+            this.expectedTotalTurns = expectedTotalTurns;
             return this;
         }
 
