@@ -6,3 +6,7 @@ target/
 *.iml
 .DS_Store
 Test.java
+
+# Internal authoring artifacts — never commit
+VOICEOVER_SCRIPT.md
+PROBLEM_AND_SOLUTION.md
